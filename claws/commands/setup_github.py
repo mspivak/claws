@@ -9,9 +9,9 @@ from rich.prompt import Confirm
 
 console = Console()
 
-_GQL_PROJECT = """
-query($org: String!, $number: Int!) {
-  organization(login: $org) {
+_GQL_PROJECT_ORG = """
+query($owner: String!, $number: Int!) {
+  organization(login: $owner) {
     projectV2(number: $number) {
       id
       fields(first: 50) {
@@ -28,17 +28,52 @@ query($org: String!, $number: Int!) {
 }
 """
 
-_GQL_CREATE_OPTION = """
-mutation($projectId: ID!, $fieldId: ID!, $name: String!) {
-  createProjectV2FieldOption(input: {
-    projectId: $projectId
-    fieldId: $fieldId
-    name: $name
-  }) {
-    option { id name }
+_GQL_PROJECT_USER = """
+query($owner: String!, $number: Int!) {
+  user(login: $owner) {
+    projectV2(number: $number) {
+      id
+      fields(first: 50) {
+        nodes {
+          ... on ProjectV2SingleSelectField {
+            id
+            name
+            options { id name }
+          }
+        }
+      }
+    }
   }
 }
 """
+
+_GQL_OWNER_TYPE = """
+query($owner: String!) {
+  repositoryOwner(login: $owner) { __typename }
+}
+"""
+
+_GQL_UPDATE_FIELD = """
+mutation($fieldId: ID!, $options: [ProjectV2SingleSelectFieldOptionInput!]!) {
+  updateProjectV2Field(input: {
+    fieldId: $fieldId
+    singleSelectOptions: $options
+  }) {
+    projectV2Field {
+      ... on ProjectV2SingleSelectField {
+        id name options { id name }
+      }
+    }
+  }
+}
+"""
+
+_REQUIRED_OPTIONS = [
+    {"name": "Ready",       "color": "GREEN",  "description": ""},
+    {"name": "In Progress", "color": "YELLOW", "description": ""},
+    {"name": "In Review",   "color": "BLUE",   "description": ""},
+    {"name": "Blocked",     "color": "RED",    "description": ""},
+]
 
 
 def _graphql(query: str, variables: dict, env: dict) -> dict:
@@ -68,17 +103,21 @@ def _put_ssm(ssm, name: str, value: str, secure: bool):
 def run(
     project: str = typer.Option(...),
     token: str = typer.Option(..., help="GitHub PAT (repo + project scopes)"),
-    org: str = typer.Option(...),
+    owner: str = typer.Option(..., help="GitHub org or user name"),
     repo: str = typer.Option(...),
     project_number: int = typer.Option(...),
     region: str = typer.Option(..., help="AWS region"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Auto-create missing status options"),
 ):
     env = {**os.environ, "GH_TOKEN": token}
 
-    console.print(f"[bold]Fetching project #{project_number} from org {org}...[/]")
+    owner_type_data = _graphql(_GQL_OWNER_TYPE, {"owner": owner}, env)
+    owner_type = owner_type_data["data"]["repositoryOwner"]["__typename"]
+    console.print(f"[bold]Fetching project #{project_number} from {owner_type.lower()} {owner}...[/]")
 
-    data = _graphql(_GQL_PROJECT, {"org": org, "number": project_number}, env)
-    project_data = data["data"]["organization"]["projectV2"]
+    query = _GQL_PROJECT_ORG if owner_type == "Organization" else _GQL_PROJECT_USER
+    data = _graphql(query, {"owner": owner, "number": project_number}, env)
+    project_data = data["data"][owner_type.lower()]["projectV2"]
     project_id = project_data["id"]
     console.print(f"Project ID: {project_id}")
 
@@ -92,30 +131,25 @@ def run(
 
     field_id = status_field["id"]
     options = {opt["name"]: opt["id"] for opt in status_field["options"]}
-    console.print(f"Status options: {list(options.keys())}")
+    console.print(f"Status options found: {list(options.keys())}")
 
-    for name in ["Ready", "In Progress", "In Review", "Blocked"]:
-        if name in options:
-            continue
-        console.print(f"[yellow]Status option '{name}' not found.[/]")
-        if not Confirm.ask(f"Create '{name}' option?", default=True):
-            console.print(f"[red]Aborting — '{name}' is required.[/]")
+    missing = [o["name"] for o in _REQUIRED_OPTIONS if o["name"] not in options]
+    if missing:
+        console.print(f"[yellow]Missing options: {missing}[/]")
+        if not yes and not Confirm.ask("Overwrite Status field with required options?", default=True):
+            console.print("[red]Aborting — required options are missing.[/]")
             raise typer.Exit(1)
-        resp = _graphql(
-            _GQL_CREATE_OPTION,
-            {"projectId": project_id, "fieldId": field_id, "name": name},
-            env,
-        )
-        new_opt = resp["data"]["createProjectV2FieldOption"]["option"]
-        options[new_opt["name"]] = new_opt["id"]
-        console.print(f"[green]Created '{name}': {new_opt['id']}[/]")
+        resp = _graphql(_GQL_UPDATE_FIELD, {"fieldId": field_id, "options": _REQUIRED_OPTIONS}, env)
+        updated = resp["data"]["updateProjectV2Field"]["projectV2Field"]
+        options = {opt["name"]: opt["id"] for opt in updated["options"]}
+        console.print(f"[green]Status field updated: {list(options.keys())}[/]")
 
     prefix = f"/claws/{project}"
     ssm = boto3.client("ssm", region_name=region)
 
     params = {
         f"{prefix}/github/token": (token, True),
-        f"{prefix}/github/org": (org, False),
+        f"{prefix}/github/org": (owner, False),
         f"{prefix}/github/repo": (repo, False),
         f"{prefix}/github/project-number": (str(project_number), False),
         f"{prefix}/github/project-id": (project_id, False),

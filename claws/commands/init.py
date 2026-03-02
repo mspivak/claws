@@ -48,7 +48,7 @@ def run(
     _run(["terraform", "init"], cwd=TERRAFORM_DIR)
 
     console.print("[bold]Applying Terraform...[/]")
-    _run(["terraform", "apply", *tf_vars], cwd=TERRAFORM_DIR)
+    _run(["terraform", "apply", "-auto-approve", *tf_vars], cwd=TERRAFORM_DIR)
 
     result = subprocess.run(
         ["terraform", "output", "-raw", "ssh_command"],

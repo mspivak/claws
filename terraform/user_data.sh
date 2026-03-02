@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-PROJECT_NAME="${project_name}"
-GITHUB_REPO="${github_repo}"
-AWS_REGION="${aws_region}"
+PROJECT_NAME="%%project_name%%"
+GITHUB_REPO="%%github_repo%%"
+AWS_REGION="%%aws_region%%"
 HOME_DIR="/home/ec2-user"
 NVM_DIR="$HOME_DIR/.nvm"
 
@@ -48,7 +48,7 @@ cat > "$HOME_DIR/fetch-secrets.sh" << 'SCRIPT'
 #!/bin/bash
 set -euo pipefail
 REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
-PREFIX="/claws/${PROJECT_NAME}"
+PREFIX="/claws/%%project_name%%"
 
 get_param() {
   aws ssm get-parameter \
@@ -77,8 +77,6 @@ ANTHROPIC_API_KEY=$(get_param anthropic/api-key)
 ENV
 SCRIPT
 
-# Inject PROJECT_NAME into script
-sed -i "s/\${PROJECT_NAME}/$PROJECT_NAME/g" "$HOME_DIR/fetch-secrets.sh"
 chmod +x "$HOME_DIR/fetch-secrets.sh"
 chown ec2-user:ec2-user "$HOME_DIR/fetch-secrets.sh"
 

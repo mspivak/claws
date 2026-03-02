@@ -96,11 +96,13 @@ resource "aws_instance" "claws" {
   iam_instance_profile   = aws_iam_instance_profile.claws.name
   vpc_security_group_ids = [aws_security_group.claws.id]
 
-  user_data = templatefile("${path.module}/user_data.sh", {
-    project_name = var.project_name
-    github_repo  = var.github_repo
-    aws_region   = var.aws_region
-  })
+  user_data = replace(
+    replace(
+      replace(file("${path.module}/user_data.sh"), "%%project_name%%", var.project_name),
+      "%%github_repo%%", var.github_repo
+    ),
+    "%%aws_region%%", var.aws_region
+  )
 
   tags = {
     Name    = "claws-${var.project_name}"

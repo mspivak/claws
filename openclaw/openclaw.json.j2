@@ -1,0 +1,29 @@
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "{{ telegram_bot_token }}",
+      "dmPolicy": "allowlist",
+      "allowFrom": [{% for uid in telegram_allowed_user_ids %}{{ uid }}{% if not loop.last %}, {% endif %}{% endfor %}],
+      "streaming": "partial",
+      "linkPreview": false
+    }
+  },
+  "acp": {
+    "enabled": true,
+    "dispatch": { "enabled": true },
+    "backend": "acpx",
+    "defaultAgent": "claude",
+    "allowedAgents": ["claude"]
+  },
+  "plugins": {
+    "entries": {
+      "acpx": {
+        "config": {
+          "permissionMode": "approve-all",
+          "maxConcurrentSessions": 4
+        }
+      }
+    }
+  }
+}

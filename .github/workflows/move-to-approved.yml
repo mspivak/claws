@@ -1,0 +1,72 @@
+name: Move card to Approved on merge
+
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  update-project:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move linked issue to Approved
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_PAT }}
+          PROJECT_NODE_ID: ${{ vars.CLAWS_PROJECT_NODE_ID }}
+          STATUS_FIELD_ID: ${{ vars.CLAWS_STATUS_FIELD_ID }}
+          STATUS_APPROVED_ID: ${{ vars.CLAWS_STATUS_APPROVED_ID }}
+        run: |
+          ISSUE_NUMBER=$(echo "${{ github.event.pull_request.body }}" \
+            | grep -oiE '(closes|fixes|resolves) #[0-9]+' \
+            | grep -oE '[0-9]+' | head -1)
+
+          if [ -z "$ISSUE_NUMBER" ]; then
+            echo "No linked issue found in PR body — skipping"
+            exit 0
+          fi
+
+          echo "Linked issue: #$ISSUE_NUMBER"
+
+          ITEM_ID=$(gh api graphql -f query='
+            query($projectId: ID!) {
+              node(id: $projectId) {
+                ... on ProjectV2 {
+                  items(first: 100) {
+                    nodes {
+                      id
+                      content {
+                        ... on Issue { number }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ' -f projectId="$PROJECT_NODE_ID" \
+            --jq --arg n "$ISSUE_NUMBER" \
+            '.data.node.items.nodes[] | select(.content.number == ($n | tonumber)) | .id')
+
+          if [ -z "$ITEM_ID" ]; then
+            echo "Issue #$ISSUE_NUMBER not found in project — skipping"
+            exit 0
+          fi
+
+          echo "Project item ID: $ITEM_ID"
+
+          gh api graphql -f query='
+            mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+              updateProjectV2ItemFieldValue(input: {
+                projectId: $projectId
+                itemId: $itemId
+                fieldId: $fieldId
+                value: { singleSelectOptionId: $optionId }
+              }) {
+                projectV2Item { id }
+              }
+            }
+          ' -f projectId="$PROJECT_NODE_ID" \
+            -f itemId="$ITEM_ID" \
+            -f fieldId="$STATUS_FIELD_ID" \
+            -f optionId="$STATUS_APPROVED_ID"
+
+          echo "Card moved to Approved"

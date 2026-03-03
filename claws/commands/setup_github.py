@@ -167,16 +167,31 @@ def run(
         _put_ssm(ssm, name, value, secure)
         console.print(f"  [green]✓[/] {name}")
 
-    console.print("[bold]Setting PROJECT_PAT repo secret for GitHub Actions...[/]")
-    result = subprocess.run(
-        ["gh", "secret", "set", "PROJECT_PAT", "--repo", repo, "--body", token],
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    if result.returncode != 0:
-        console.print(f"[yellow]Warning: could not set PROJECT_PAT secret: {result.stderr.strip()}[/]")
-    else:
-        console.print(f"  [green]✓[/] PROJECT_PAT secret on {repo}")
+    console.print("[bold]Setting GitHub Actions secrets and variables...[/]")
+    for name, value in [
+        ("PROJECT_PAT", token),
+    ]:
+        result = subprocess.run(
+            ["gh", "secret", "set", name, "--repo", repo, "--body", value],
+            capture_output=True, text=True, env=env,
+        )
+        if result.returncode != 0:
+            console.print(f"[yellow]Warning: could not set secret {name}: {result.stderr.strip()}[/]")
+        else:
+            console.print(f"  [green]✓[/] secret {name}")
+
+    for name, value in [
+        ("CLAWS_PROJECT_NODE_ID", project_id),
+        ("CLAWS_STATUS_FIELD_ID", field_id),
+        ("CLAWS_STATUS_APPROVED_ID", options["Approved"]),
+    ]:
+        result = subprocess.run(
+            ["gh", "variable", "set", name, "--repo", repo, "--body", value],
+            capture_output=True, text=True, env=env,
+        )
+        if result.returncode != 0:
+            console.print(f"[yellow]Warning: could not set variable {name}: {result.stderr.strip()}[/]")
+        else:
+            console.print(f"  [green]✓[/] variable {name}")
 
     console.print(f"[bold]Done.[/] Run [cyan]claws status --project {project}[/] to verify.")

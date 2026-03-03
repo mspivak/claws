@@ -1,5 +1,6 @@
 import json
 import subprocess
+from datetime import datetime, timezone
 
 import boto3
 import typer
@@ -31,6 +32,21 @@ def _ssh(ip: str, cmd: str) -> str:
     return result.stdout.strip()
 
 
+def _relative(ms: int) -> str:
+    now = datetime.now(timezone.utc).timestamp() * 1000
+    diff = int((ms - now) / 1000)
+    if diff < 0:
+        secs = -diff
+        if secs < 60:
+            return f"{secs}s ago"
+        if secs < 3600:
+            return f"{secs // 60}m ago"
+        return f"{secs // 3600}h ago"
+    if diff < 60:
+        return f"in {diff}s"
+    return f"in {diff // 60}m"
+
+
 def run(
     project: str = typer.Option(...),
     region: str = typer.Option(..., help="AWS region"),
@@ -47,9 +63,8 @@ def run(
     gateway = _ssh(ip, "openclaw gateway health --json 2>/dev/null")
     try:
         gw = json.loads(gateway)
-        status = "ok" if gw.get("ok") else "error"
         color = "green" if gw.get("ok") else "red"
-        console.print(f"[bold]Gateway:[/] [{color}]{status}[/]")
+        console.print(f"[bold]Gateway:[/] [{color}]{'ok' if gw.get('ok') else 'error'}[/]")
     except Exception:
         console.print("[bold]Gateway:[/] [red]unreachable[/]")
 
@@ -58,40 +73,65 @@ def run(
         jobs = json.loads(cron).get("jobs", [])
         poller = next((j for j in jobs if j.get("name") == "github-poller"), None)
         if poller:
-            last = poller.get("state", {}).get("lastRunAtMs")
-            nxt = poller.get("state", {}).get("nextRunAtMs")
-            console.print(f"[bold]Poller:[/] enabled  last={last}  next={nxt}")
+            last_ms = poller.get("state", {}).get("lastRunAtMs")
+            next_ms = poller.get("state", {}).get("nextRunAtMs")
+            last_str = _relative(last_ms) if last_ms else "never"
+            next_str = _relative(next_ms) if next_ms else "unknown"
+            console.print(f"[bold]Poller:[/] last ran {last_str}, next {next_str}")
         else:
-            console.print("[bold]Poller:[/] [yellow]cron job not found[/]")
+            console.print("[bold]Poller:[/] [yellow]not configured[/]")
     except Exception:
         console.print("[bold]Poller:[/] [yellow]unknown[/]")
 
-    sessions_raw = _ssh(ip, "openclaw gateway call sessions.list --json 2>/dev/null")
+    ssm = boto3.client("ssm", region_name=region)
+    repo = ""
     try:
-        sessions = json.loads(sessions_raw).get("sessions", [])
-        acp = [s for s in sessions if "poller-issue" in (s.get("label") or "")]
-        state_raw = _ssh(ip, "cat ~/.openclaw/poller-state.json 2>/dev/null || echo '{}'")
+        repo = ssm.get_parameter(Name=f"/claws/{project}/github/repo")["Parameter"]["Value"]
+    except Exception:
+        pass
+
+    sessions_raw = _ssh(ip, "openclaw gateway call sessions.list --json 2>/dev/null")
+    state_raw = _ssh(ip, "cat ~/.openclaw/poller-state.json 2>/dev/null || echo '{}'")
+    try:
+        all_sessions = json.loads(sessions_raw).get("sessions", [])
+        active_keys = {s["key"] for s in all_sessions}
         state = json.loads(state_raw).get("sessions", {})
-        console.print(f"[bold]Active sessions:[/] {len(state)}  (tracked in poller-state.json)")
-        if acp:
-            t = Table("label", "updated", box=None, pad_edge=False)
-            for s in acp:
-                import datetime
-                ts = datetime.datetime.fromtimestamp(s["updatedAt"] / 1000).strftime("%H:%M:%S")
-                t.add_row(s["label"], ts)
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000
+        acp = [
+            s for s in all_sessions
+            if "poller-issue" in (s.get("label") or "")
+            and (s["key"] in state or (now_ms - s["updatedAt"]) < 30 * 60 * 1000)
+        ]
+        seen_issues = set()
+        deduped = []
+        for s in sorted(acp, key=lambda x: x["updatedAt"], reverse=True):
+            issue_num = s.get("label", "").replace("poller-issue-", "").split("-")[0]
+            if issue_num not in seen_issues:
+                seen_issues.add(issue_num)
+                deduped.append(s)
+
+        console.print(f"\n[bold]Sessions:[/] {len(state)} active")
+        if deduped:
+            t = Table("Issue", "Branch", "Status", "Last update", box=None, pad_edge=False)
+            for s in deduped:
+                label = s.get("label", "")
+                issue_num = label.replace("poller-issue-", "").split("-")[0]
+                issue_url = f"https://github.com/{repo}/issues/{issue_num}" if repo else f"#{issue_num}"
+                branch = f"issue-{issue_num}"
+                running = s["key"] in state
+                status_str = "[green]running[/]" if running else "[dim]finished[/]"
+                updated = _relative(s["updatedAt"])
+                t.add_row(issue_url, branch, status_str, updated)
             console.print(t)
     except Exception:
         console.print("[bold]Sessions:[/] [yellow]unknown[/]")
 
-    ssm = boto3.client("ssm", region_name=region)
-    prefix = f"/claws/{project}"
     keys = ["github/token", "github/repo", "github/project-id",
             "anthropic/api-key", "telegram/bot-token"]
-    console.print("\n[bold]SSM parameters:[/]")
+    console.print("\n[bold]Secrets:[/]")
     for key in keys:
-        name = f"{prefix}/{key}"
         try:
-            ssm.get_parameter(Name=name, WithDecryption=False)
-            console.print(f"  [green]✓[/] {name}")
+            ssm.get_parameter(Name=f"/claws/{project}/{key}", WithDecryption=False)
+            console.print(f"  [green]✓[/] {key}")
         except ssm.exceptions.ParameterNotFound:
-            console.print(f"  [red]✗[/] {name}")
+            console.print(f"  [red]✗[/] {key}")

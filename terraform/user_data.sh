@@ -77,6 +77,7 @@ CLAWS_STATUS_READY=$(get_param github/status-ready)
 CLAWS_STATUS_IN_PROGRESS=$(get_param github/status-in-progress)
 CLAWS_STATUS_BLOCKED=$(get_param github/status-blocked)
 CLAWS_STATUS_IN_REVIEW=$(get_param github/status-in-review)
+CLAWS_STATUS_APPROVED=$(get_param github/status-approved)
 ANTHROPIC_API_KEY=$(get_param anthropic/api-key)
 ENV
 

@@ -47,7 +47,7 @@ loginctl enable-linger ec2-user
 cat > "$HOME_DIR/fetch-secrets.sh" << 'SCRIPT'
 #!/bin/bash
 set -euo pipefail
-REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)
+REGION="%%aws_region%%"
 PREFIX="/claws/%%project_name%%"
 
 get_param() {
@@ -60,9 +60,13 @@ get_param() {
 }
 
 mkdir -p ~/.openclaw
+
+BOT_TOKEN=$(get_param telegram/bot-token)
+ALLOWED_IDS=$(get_param telegram/allowed-user-ids)
+
 cat > ~/.openclaw/secrets.env << ENV
-TELEGRAM_BOT_TOKEN=$(get_param telegram/bot-token)
-TELEGRAM_ALLOWED_USER_IDS=$(get_param telegram/allowed-user-ids)
+TELEGRAM_BOT_TOKEN=$BOT_TOKEN
+TELEGRAM_ALLOWED_USER_IDS=$ALLOWED_IDS
 GITHUB_TOKEN=$(get_param github/token)
 GITHUB_ORG=$(get_param github/org)
 GITHUB_REPO=$(get_param github/repo)
@@ -75,6 +79,40 @@ CLAWS_STATUS_BLOCKED=$(get_param github/status-blocked)
 CLAWS_STATUS_IN_REVIEW=$(get_param github/status-in-review)
 ANTHROPIC_API_KEY=$(get_param anthropic/api-key)
 ENV
+
+if [ -n "$BOT_TOKEN" ] && [ "$BOT_TOKEN" != "placeholder" ]; then
+  IDS_JSON=$(echo "$ALLOWED_IDS" | tr ',' '\n' | jq -R 'tonumber' | jq -sc '.')
+  cat > ~/.openclaw/openclaw.json << CFG
+{
+  "channels": {
+    "telegram": {
+      "enabled": true,
+      "botToken": "$BOT_TOKEN",
+      "dmPolicy": "allowlist",
+      "allowFrom": $IDS_JSON,
+      "streaming": "partial",
+      "linkPreview": false
+    }
+  },
+  "acp": {
+    "enabled": true,
+    "dispatch": { "enabled": true },
+    "backend": "acpx",
+    "defaultAgent": "claude",
+    "allowedAgents": ["claude"]
+  },
+  "plugins": {
+    "entries": {
+      "acpx": {
+        "config": {
+          "permissionMode": "approve-all"
+        }
+      }
+    }
+  }
+}
+CFG
+fi
 SCRIPT
 
 chmod +x "$HOME_DIR/fetch-secrets.sh"
@@ -102,18 +140,13 @@ WorkingDirectory=%h
 WantedBy=default.target
 SERVICE
 
-# ── 9. OpenClaw config ───────────────────────────────────────────────────────
+# ── 9. OpenClaw config (bootstrap: Telegram disabled until setup-telegram runs) ─
 mkdir -p "$HOME_DIR/.openclaw"
 cat > "$HOME_DIR/.openclaw/openclaw.json" << 'CONFIG'
 {
   "channels": {
     "telegram": {
-      "enabled": true,
-      "botToken": "${TELEGRAM_BOT_TOKEN}",
-      "dmPolicy": "allowlist",
-      "allowFrom": [],
-      "streaming": "partial",
-      "linkPreview": false
+      "enabled": false
     }
   },
   "acp": {
@@ -127,8 +160,7 @@ cat > "$HOME_DIR/.openclaw/openclaw.json" << 'CONFIG'
     "entries": {
       "acpx": {
         "config": {
-          "permissionMode": "approve-all",
-          "maxConcurrentSessions": 4
+          "permissionMode": "approve-all"
         }
       }
     }

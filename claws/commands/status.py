@@ -131,7 +131,10 @@ def run(
     console.print("\n[bold]Secrets:[/]")
     for key in keys:
         try:
-            ssm.get_parameter(Name=f"/claws/{project}/{key}", WithDecryption=False)
-            console.print(f"  [green]✓[/] {key}")
+            val = ssm.get_parameter(Name=f"/claws/{project}/{key}", WithDecryption=True)["Parameter"]["Value"]
+            if val == "placeholder":
+                console.print(f"  [yellow]![/] {key} [dim](not configured)[/]")
+            else:
+                console.print(f"  [green]✓[/] {key}")
         except ssm.exceptions.ParameterNotFound:
-            console.print(f"  [red]✗[/] {key}")
+            console.print(f"  [red]✗[/] {key} [dim](missing)[/]")

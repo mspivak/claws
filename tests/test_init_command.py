@@ -26,6 +26,7 @@ def test_custom_instance_type_is_passed_to_terraform():
         patch("claws.commands.init._check_aws_credentials"),
         patch("claws.commands.init._run") as mock_run,
         patch("subprocess.run") as mock_subprocess,
+        patch("claws.commands.init.save_project_config"),
     ):
         mock_subprocess.return_value = MagicMock(returncode=1)
         result = runner.invoke(

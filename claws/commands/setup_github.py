@@ -102,14 +102,21 @@ def _put_ssm(ssm, name: str, value: str, secure: bool):
 
 
 def run(
-    project: str = typer.Option(...),
+    project: str = typer.Option(None),
     token: str = typer.Option(..., help="GitHub PAT (repo + project scopes)"),
     owner: str = typer.Option(..., help="GitHub org or user name"),
     repo: str = typer.Option(...),
     project_number: int = typer.Option(...),
-    region: str = typer.Option(..., help="AWS region"),
+    region: str = typer.Option(None, help="AWS region"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Auto-create missing status options"),
 ):
+    from claws.config import resolve
+    try:
+        project, region = resolve(project, region)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+
     env = {**os.environ, "GH_TOKEN": token}
 
     owner_type_data = _graphql(_GQL_OWNER_TYPE, {"owner": owner}, env)

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import subprocess
+from typing import Optional
 
 import boto3
 import typer
@@ -7,7 +10,7 @@ from rich.console import Console
 console = Console()
 
 
-def _get_instance_ip(project: str, region: str) -> str:
+def _get_instance_ip(project: str, region: str) -> Optional[str]:
     ec2 = boto3.client("ec2", region_name=region)
     resp = ec2.describe_instances(
         Filters=[
@@ -22,10 +25,17 @@ def _get_instance_ip(project: str, region: str) -> str:
 
 
 def run(
-    project: str = typer.Option(...),
+    project: Optional[str] = typer.Option(None),
     api_key: str = typer.Option(..., envvar="ANTHROPIC_API_KEY", help="Anthropic API key"),
-    region: str = typer.Option(..., help="AWS region"),
+    region: Optional[str] = typer.Option(None, help="AWS region"),
 ):
+    from claws.config import resolve
+    try:
+        project, region = resolve(project, region)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+
     ssm = boto3.client("ssm", region_name=region)
     ssm.put_parameter(
         Name=f"/claws/{project}/anthropic/api-key",

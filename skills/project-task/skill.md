@@ -74,6 +74,23 @@ gh pr create \
 
 ## Step 6 — Move to In Review
 
+Post a comment on the issue summarising the plan you followed and what was implemented:
+
+```bash
+gh issue comment $CLAWS_ISSUE_NUMBER \
+  --repo $GITHUB_REPO \
+  --body "## Implementation Plan
+
+**Approach**: <one-sentence summary of the approach taken>
+
+**Changes made**:
+- <file or component changed>: <what was done>
+
+**Tests**: <brief description of tests written and what they verify>"
+```
+
+Then move the card to In Review:
+
 ```bash
 gh api graphql -f query='
   mutation {

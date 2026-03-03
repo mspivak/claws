@@ -14,13 +14,12 @@ Runs every 60 seconds. Polls the GitHub project for READY tasks and spawns Claud
 - `CLAWS_STATUS_BLOCKED`
 - `CLAWS_STATUS_IN_REVIEW`
 
-## Step 1 — Check active session count
+## Step 1 — Check capacity
 
-Use the `sessions_list` tool with `{"kinds": ["acp"], "activeMinutes": 120}`.
+Read `~/.openclaw/poller-state.json` (initialize to `{"sessions":{}}` if missing).
 
-Count running sessions. MAX=4. If `MAX - active == 0`, exit — nothing to do.
-
-Also read `~/.openclaw/poller-state.json` (initialize to `{"sessions":{}}` if missing).
+Count the entries in `.sessions` — this is the number of currently active sessions.
+MAX=4. If `active >= MAX`, exit — nothing to do.
 
 ## Step 2 — Fetch READY items
 
@@ -97,9 +96,10 @@ Record the returned session key → issue mapping in `~/.openclaw/poller-state.j
 
 ## Step 4 — Monitor completed sessions
 
-Use `sessions_list` with `{"kinds": ["acp"], "activeMinutes": 120}` to get currently active sessions.
+Use the `sessions_list` tool with `{"kinds": ["acp"], "activeMinutes": 5}` to get recently active sessions.
+Build a set of active session keys from the result.
 
-For each session tracked in `poller-state.json` that is no longer in the active list:
+For each session tracked in `poller-state.json` whose key is NOT in that set:
 
 1. Look up the issue number from `poller-state.json`
 2. Check the issue's current status in the GitHub project via GraphQL

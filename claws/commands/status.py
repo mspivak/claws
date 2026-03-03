@@ -47,6 +47,38 @@ def _relative(ms: int) -> str:
     return f"in {diff // 60}m"
 
 
+def _check_secrets(ip: str) -> dict:
+    script = r"""
+source ~/.openclaw/secrets.env 2>/dev/null
+export GH_TOKEN="$GITHUB_TOKEN"
+
+check_github() {
+  result=$(gh api user --jq .login 2>&1) && echo "ok:$result" || echo "fail:$result"
+}
+
+check_anthropic() {
+  code=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2023-06-01" \
+    https://api.anthropic.com/v1/models 2>/dev/null)
+  [ "$code" = "200" ] && echo "ok" || echo "fail:http $code"
+}
+
+check_telegram() {
+  [ -z "$TELEGRAM_BOT_TOKEN" ] && echo "fail:not set" && return
+  result=$(curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe" 2>/dev/null)
+  echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print('ok:@'+d['result']['username'] if d.get('ok') else 'fail:'+d.get('description',''))" 2>/dev/null || echo "fail:invalid response"
+}
+
+echo "{\"github\":\"$(check_github)\",\"anthropic\":\"$(check_anthropic)\",\"telegram\":\"$(check_telegram)\"}"
+"""
+    out = _ssh(ip, script)
+    try:
+        return json.loads(out)
+    except Exception:
+        return {}
+
+
 def run(
     project: str = typer.Option(...),
     region: str = typer.Option(..., help="AWS region"),
@@ -57,8 +89,7 @@ def run(
         raise typer.Exit(1)
 
     ip = instance["PublicIpAddress"]
-    instance_id = instance["InstanceId"]
-    console.print(f"[bold]Instance:[/] {instance_id} ({ip})")
+    console.print(f"[bold]Instance:[/] {instance['InstanceId']} ({ip})")
 
     gateway = _ssh(ip, "openclaw gateway health --json 2>/dev/null")
     try:
@@ -94,7 +125,6 @@ def run(
     state_raw = _ssh(ip, "cat ~/.openclaw/poller-state.json 2>/dev/null || echo '{}'")
     try:
         all_sessions = json.loads(sessions_raw).get("sessions", [])
-        active_keys = {s["key"] for s in all_sessions}
         state = json.loads(state_raw).get("sessions", {})
         now_ms = datetime.now(timezone.utc).timestamp() * 1000
         acp = [
@@ -102,7 +132,7 @@ def run(
             if "poller-issue" in (s.get("label") or "")
             and (s["key"] in state or (now_ms - s["updatedAt"]) < 30 * 60 * 1000)
         ]
-        seen_issues = set()
+        seen_issues: set = set()
         deduped = []
         for s in sorted(acp, key=lambda x: x["updatedAt"], reverse=True):
             issue_num = s.get("label", "").replace("poller-issue-", "").split("-")[0]
@@ -117,24 +147,21 @@ def run(
                 label = s.get("label", "")
                 issue_num = label.replace("poller-issue-", "").split("-")[0]
                 issue_url = f"https://github.com/{repo}/issues/{issue_num}" if repo else f"#{issue_num}"
-                branch = f"issue-{issue_num}"
                 running = s["key"] in state
                 status_str = "[green]running[/]" if running else "[dim]finished[/]"
-                updated = _relative(s["updatedAt"])
-                t.add_row(issue_url, branch, status_str, updated)
+                t.add_row(issue_url, f"issue-{issue_num}", status_str, _relative(s["updatedAt"]))
             console.print(t)
     except Exception:
         console.print("[bold]Sessions:[/] [yellow]unknown[/]")
 
-    keys = ["github/token", "github/repo", "github/project-id",
-            "anthropic/api-key", "telegram/bot-token"]
-    console.print("\n[bold]Secrets:[/]")
-    for key in keys:
-        try:
-            val = ssm.get_parameter(Name=f"/claws/{project}/{key}", WithDecryption=True)["Parameter"]["Value"]
-            if val == "placeholder":
-                console.print(f"  [yellow]![/] {key} [dim](not configured)[/]")
-            else:
-                console.print(f"  [green]✓[/] {key}")
-        except ssm.exceptions.ParameterNotFound:
-            console.print(f"  [red]✗[/] {key} [dim](missing)[/]")
+    console.print("\n[bold]Credentials:[/]")
+    checks = _check_secrets(ip)
+    for label, key in [("GitHub", "github"), ("Anthropic", "anthropic"), ("Telegram", "telegram")]:
+        result = checks.get(key, "")
+        if result.startswith("ok"):
+            detail = result[3:] if len(result) > 3 else ""
+            suffix = f" [dim]({detail})[/]" if detail else ""
+            console.print(f"  [green]✓[/] {label}{suffix}")
+        else:
+            reason = result[5:] if result.startswith("fail:") else "unknown"
+            console.print(f"  [red]✗[/] {label} [dim]({reason})[/]")

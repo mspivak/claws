@@ -72,6 +72,7 @@ _REQUIRED_OPTIONS = [
     {"name": "Ready",       "color": "GREEN",  "description": ""},
     {"name": "In Progress", "color": "YELLOW", "description": ""},
     {"name": "In Review",   "color": "BLUE",   "description": ""},
+    {"name": "Approved",    "color": "PURPLE", "description": ""},
     {"name": "Blocked",     "color": "RED",    "description": ""},
 ]
 
@@ -158,11 +159,24 @@ def run(
         f"{prefix}/github/status-in-progress": (options["In Progress"], False),
         f"{prefix}/github/status-blocked": (options["Blocked"], False),
         f"{prefix}/github/status-in-review": (options["In Review"], False),
+        f"{prefix}/github/status-approved": (options["Approved"], False),
     }
 
     console.print("[bold]Writing SSM parameters...[/]")
     for name, (value, secure) in params.items():
         _put_ssm(ssm, name, value, secure)
         console.print(f"  [green]✓[/] {name}")
+
+    console.print("[bold]Setting PROJECT_PAT repo secret for GitHub Actions...[/]")
+    result = subprocess.run(
+        ["gh", "secret", "set", "PROJECT_PAT", "--repo", repo, "--body", token],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    if result.returncode != 0:
+        console.print(f"[yellow]Warning: could not set PROJECT_PAT secret: {result.stderr.strip()}[/]")
+    else:
+        console.print(f"  [green]✓[/] PROJECT_PAT secret on {repo}")
 
     console.print(f"[bold]Done.[/] Run [cyan]claws status --project {project}[/] to verify.")

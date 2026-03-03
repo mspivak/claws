@@ -77,6 +77,7 @@ CLAWS_STATUS_READY=$(get_param github/status-ready)
 CLAWS_STATUS_IN_PROGRESS=$(get_param github/status-in-progress)
 CLAWS_STATUS_BLOCKED=$(get_param github/status-blocked)
 CLAWS_STATUS_IN_REVIEW=$(get_param github/status-in-review)
+CLAWS_STATUS_APPROVED=$(get_param github/status-approved)
 ANTHROPIC_API_KEY=$(get_param anthropic/api-key)
 ENV
 
@@ -414,6 +415,22 @@ sudo -u ec2-user bash -c "
   systemctl --user enable --now claws-secrets.service
   systemctl --user enable --now claws-clone.service
   systemctl --user enable --now openclaw-gateway.service
+"
+
+# ── 13. Register github-poller cron job ──────────────────────────────────────
+# Wait for gateway to be ready, then add the cron job
+sudo -u ec2-user bash -c "
+  source $NVM_DIR/nvm.sh
+  for i in \$(seq 1 30); do
+    openclaw gateway health --json 2>/dev/null | grep -q '\"status\":\"ok\"' && break
+    sleep 2
+  done
+  openclaw cron add \
+    --name github-poller \
+    --every 60s \
+    --system-event 'Poll GitHub project for READY tasks' \
+    --session main \
+    --timeout-seconds 120
 "
 
 log "Bootstrap complete"

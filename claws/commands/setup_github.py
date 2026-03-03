@@ -72,6 +72,7 @@ _REQUIRED_OPTIONS = [
     {"name": "Ready",       "color": "GREEN",  "description": ""},
     {"name": "In Progress", "color": "YELLOW", "description": ""},
     {"name": "In Review",   "color": "BLUE",   "description": ""},
+    {"name": "Approved",    "color": "PURPLE", "description": ""},
     {"name": "Blocked",     "color": "RED",    "description": ""},
 ]
 
@@ -158,11 +159,39 @@ def run(
         f"{prefix}/github/status-in-progress": (options["In Progress"], False),
         f"{prefix}/github/status-blocked": (options["Blocked"], False),
         f"{prefix}/github/status-in-review": (options["In Review"], False),
+        f"{prefix}/github/status-approved": (options["Approved"], False),
     }
 
     console.print("[bold]Writing SSM parameters...[/]")
     for name, (value, secure) in params.items():
         _put_ssm(ssm, name, value, secure)
         console.print(f"  [green]✓[/] {name}")
+
+    console.print("[bold]Setting GitHub Actions secrets and variables...[/]")
+    for name, value in [
+        ("PROJECT_PAT", token),
+    ]:
+        result = subprocess.run(
+            ["gh", "secret", "set", name, "--repo", repo, "--body", value],
+            capture_output=True, text=True, env=env,
+        )
+        if result.returncode != 0:
+            console.print(f"[yellow]Warning: could not set secret {name}: {result.stderr.strip()}[/]")
+        else:
+            console.print(f"  [green]✓[/] secret {name}")
+
+    for name, value in [
+        ("CLAWS_PROJECT_NODE_ID", project_id),
+        ("CLAWS_STATUS_FIELD_ID", field_id),
+        ("CLAWS_STATUS_APPROVED_ID", options["Approved"]),
+    ]:
+        result = subprocess.run(
+            ["gh", "variable", "set", name, "--repo", repo, "--body", value],
+            capture_output=True, text=True, env=env,
+        )
+        if result.returncode != 0:
+            console.print(f"[yellow]Warning: could not set variable {name}: {result.stderr.strip()}[/]")
+        else:
+            console.print(f"  [green]✓[/] variable {name}")
 
     console.print(f"[bold]Done.[/] Run [cyan]claws status --project {project}[/] to verify.")

@@ -30,7 +30,7 @@ def run(
     console.print(f"[bold]Instance:[/] {ip}")
 
     result = subprocess.run(
-        ["ssh", "-o", "StrictHostKeyChecking=no", f"ec2-user@{ip}", "openclaw acp status"],
+        ["ssh", "-o", "StrictHostKeyChecking=no", f"ec2-user@{ip}", "openclaw acp"],
         text=True,
     )
     if result.returncode != 0:

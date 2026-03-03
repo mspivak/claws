@@ -416,4 +416,20 @@ sudo -u ec2-user bash -c "
   systemctl --user enable --now openclaw-gateway.service
 "
 
+# ── 13. Register github-poller cron job ──────────────────────────────────────
+# Wait for gateway to be ready, then add the cron job
+sudo -u ec2-user bash -c "
+  source $NVM_DIR/nvm.sh
+  for i in \$(seq 1 30); do
+    openclaw gateway health --json 2>/dev/null | grep -q '\"status\":\"ok\"' && break
+    sleep 2
+  done
+  openclaw cron add \
+    --name github-poller \
+    --every 60s \
+    --system-event 'Poll GitHub project for READY tasks' \
+    --session main \
+    --timeout-seconds 120
+"
+
 log "Bootstrap complete"

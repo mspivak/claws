@@ -31,7 +31,7 @@ def run(
     project: str = typer.Option(..., help="Project name (used as SSM prefix and name tag)"),
     repo: str = typer.Option(..., help="GitHub repo to clone (org/name)"),
     region: str = typer.Option(..., help="AWS region"),
-    instance_type: str = typer.Option("t3.large"),
+    instance_type: str = typer.Option("t3.nano", help="EC2 instance type"),
     ssh_public_key_path: str = typer.Option("~/.ssh/id_rsa.pub"),
 ):
     _check_aws_credentials()

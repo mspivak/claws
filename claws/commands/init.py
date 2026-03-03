@@ -1,10 +1,15 @@
+from __future__ import annotations
+
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 import boto3
 import typer
 from rich.console import Console
+
+from claws.config import save_project_config
 
 console = Console()
 
@@ -21,7 +26,7 @@ def _check_aws_credentials():
         raise typer.Exit(1)
 
 
-def _run(cmd: list[str], cwd: Path):
+def _run(cmd: list, cwd: Path):
     result = subprocess.run(cmd, cwd=cwd)
     if result.returncode != 0:
         raise typer.Exit(result.returncode)
@@ -49,6 +54,9 @@ def run(
 
     console.print("[bold]Applying Terraform...[/]")
     _run(["terraform", "apply", "-auto-approve", *tf_vars], cwd=TERRAFORM_DIR)
+
+    config_path = save_project_config(project, region)
+    console.print(f"[green]Config saved:[/] {config_path}")
 
     result = subprocess.run(
         ["terraform", "output", "-raw", "ssh_command"],

@@ -35,11 +35,18 @@ def _get_instance_ip(project: str, region: str) -> str:
 
 
 def run(
-    project: str = typer.Option(...),
+    project: str = typer.Option(None),
     bot_token: str = typer.Option(...),
     allowed_user_ids: str = typer.Option(..., help="Comma-separated numeric Telegram user IDs"),
-    region: str = typer.Option(..., help="AWS region"),
+    region: str = typer.Option(None, help="AWS region"),
 ):
+    from claws.config import resolve
+    try:
+        project, region = resolve(project, region)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+
     prefix = f"/claws/{project}"
     ssm = boto3.client("ssm", region_name=region)
 

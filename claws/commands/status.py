@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import json
 import subprocess
 from datetime import datetime, timezone
+from typing import Optional
 
 import boto3
 import typer
@@ -10,7 +13,7 @@ from rich.table import Table
 console = Console()
 
 
-def _get_instance(project: str, region: str) -> dict | None:
+def _get_instance(project: str, region: str) -> Optional[dict]:
     ec2 = boto3.client("ec2", region_name=region)
     resp = ec2.describe_instances(
         Filters=[
@@ -80,9 +83,16 @@ echo "{\"github\":\"$(check_github)\",\"anthropic\":\"$(check_anthropic)\",\"tel
 
 
 def run(
-    project: str = typer.Option(...),
-    region: str = typer.Option(..., help="AWS region"),
+    project: Optional[str] = typer.Option(None),
+    region: Optional[str] = typer.Option(None, help="AWS region"),
 ):
+    from claws.config import resolve
+    try:
+        project, region = resolve(project, region)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/]")
+        raise typer.Exit(1)
+
     instance = _get_instance(project, region)
     if not instance:
         console.print(f"[red]No running instance for project '{project}'[/]")

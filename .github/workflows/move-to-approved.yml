@@ -43,8 +43,8 @@ jobs:
               }
             }
           ' -f projectId="$PROJECT_NODE_ID" \
-            --jq --arg n "$ISSUE_NUMBER" \
-            '.data.node.items.nodes[] | select(.content.number == ($n | tonumber)) | .id')
+            | jq -r --argjson n "$ISSUE_NUMBER" \
+              '.data.node.items.nodes[] | select(.content.number == $n) | .id')
 
           if [ -z "$ITEM_ID" ]; then
             echo "Issue #$ISSUE_NUMBER not found in project — skipping"

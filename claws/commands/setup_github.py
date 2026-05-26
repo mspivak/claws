@@ -72,9 +72,10 @@ _REQUIRED_OPTIONS = [
     {"name": "Ready",       "color": "GREEN",  "description": ""},
     {"name": "In Progress", "color": "YELLOW", "description": ""},
     {"name": "In Review",   "color": "BLUE",   "description": ""},
-    {"name": "Approved",    "color": "PURPLE", "description": ""},
     {"name": "Blocked",     "color": "RED",    "description": ""},
 ]
+
+_OPTIONAL_OPTIONS = ["Approved"]
 
 
 def _graphql(query: str, variables: dict, env: dict) -> dict:
@@ -166,8 +167,17 @@ def run(
         f"{prefix}/github/status-in-progress": (options["In Progress"], False),
         f"{prefix}/github/status-blocked": (options["Blocked"], False),
         f"{prefix}/github/status-in-review": (options["In Review"], False),
-        f"{prefix}/github/status-approved": (options["Approved"], False),
     }
+
+    if "Approved" in options:
+        params[f"{prefix}/github/status-approved"] = (options["Approved"], False)
+    else:
+        console.print(
+            "[yellow]Warning:[/] no 'Approved' option in project Status field — "
+            "skipping /github/status-approved. The poller will not be able to detect "
+            "the terminal approval state. If your project uses 'Done' or another name, "
+            "rename it to 'Approved' or set the SSM param manually."
+        )
 
     console.print("[bold]Writing SSM parameters...[/]")
     for name, (value, secure) in params.items():
@@ -187,11 +197,14 @@ def run(
         else:
             console.print(f"  [green]✓[/] secret {name}")
 
-    for name, value in [
+    variables = [
         ("CLAWS_PROJECT_NODE_ID", project_id),
         ("CLAWS_STATUS_FIELD_ID", field_id),
-        ("CLAWS_STATUS_APPROVED_ID", options["Approved"]),
-    ]:
+    ]
+    if "Approved" in options:
+        variables.append(("CLAWS_STATUS_APPROVED_ID", options["Approved"]))
+
+    for name, value in variables:
         result = subprocess.run(
             ["gh", "variable", "set", name, "--repo", repo, "--body", value],
             capture_output=True, text=True, env=env,

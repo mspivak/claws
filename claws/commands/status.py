@@ -83,7 +83,15 @@ check_telegram() {
   echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print('ok:@'+d['result']['username'] if d.get('ok') else 'fail:'+d.get('description',''))" 2>/dev/null || echo "fail:invalid response"
 }
 
-echo "{\"github\":\"$(check_github)\",\"anthropic\":\"$(check_anthropic)\",\"telegram\":\"$(check_telegram)\"}"
+check_approved() {
+  if [ -z "$CLAWS_STATUS_APPROVED" ] || [ "$CLAWS_STATUS_APPROVED" = "placeholder" ]; then
+    echo "fail:not configured"
+  else
+    echo "ok:$CLAWS_STATUS_APPROVED"
+  fi
+}
+
+echo "{\"github\":\"$(check_github)\",\"anthropic\":\"$(check_anthropic)\",\"telegram\":\"$(check_telegram)\",\"approved\":\"$(check_approved)\"}"
 """
     out = _ssh(ip, script)
     try:
@@ -176,7 +184,12 @@ def run(
 
     console.print("\n[bold]Credentials:[/]")
     checks = _check_secrets(ip)
-    for label, key in [("GitHub", "github"), ("Anthropic", "anthropic"), ("Telegram", "telegram")]:
+    for label, key in [
+        ("GitHub", "github"),
+        ("Anthropic", "anthropic"),
+        ("Telegram", "telegram"),
+        ("Approved status option", "approved"),
+    ]:
         result = checks.get(key, "")
         if result.startswith("ok"):
             detail = result[3:] if len(result) > 3 else ""

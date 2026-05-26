@@ -60,11 +60,21 @@ check_github() {
 }
 
 check_anthropic() {
-  code=$(curl -s -o /dev/null -w "%{http_code}" \
+  result=$(curl -s -X POST https://api.anthropic.com/v1/messages \
     -H "x-api-key: $ANTHROPIC_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
-    https://api.anthropic.com/v1/models 2>/dev/null)
-  [ "$code" = "200" ] && echo "ok" || echo "fail:http $code"
+    -H "content-type: application/json" \
+    -d '{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' 2>/dev/null)
+  echo "$result" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+if d.get('type') == 'message':
+    print('ok')
+elif d.get('type') == 'error':
+    print('fail:' + d.get('error', {}).get('message', 'unknown'))
+else:
+    print('fail:unexpected response')
+" 2>/dev/null || echo "fail:invalid response"
 }
 
 check_telegram() {

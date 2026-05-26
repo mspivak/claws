@@ -427,9 +427,12 @@ sudo -u ec2-user bash -c "
   done
   openclaw cron add \
     --name github-poller \
-    --every 60s \
-    --system-event 'Poll GitHub project for READY tasks' \
-    --session main \
+    --every 5m \
+    --session isolated \
+    --agent claude \
+    --model claude-haiku-4-5-20251001 \
+    --message 'Read ~/.openclaw/skills/github-poller/skill.md and follow it exactly.' \
+    --light-context \
     --timeout-seconds 120
 "
 

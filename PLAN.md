@@ -79,6 +79,7 @@ All under `/claws/{project_name}/`:
 | `github/status-in-progress` | String | Option ID for "In Progress" |
 | `github/status-blocked` | String | Option ID for "Blocked" |
 | `github/status-in-review` | String | Option ID for "In Review" |
+| `github/status-approved` | String | Option ID for "Approved" (terminal state; optional if project has no "Approved" column) |
 | `anthropic/api-key` | SecureString | Anthropic API key for Claude Code |
 
 ---

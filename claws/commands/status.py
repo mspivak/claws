@@ -60,11 +60,21 @@ check_github() {
 }
 
 check_anthropic() {
-  code=$(curl -s -o /dev/null -w "%{http_code}" \
+  result=$(curl -s -X POST https://api.anthropic.com/v1/messages \
     -H "x-api-key: $ANTHROPIC_API_KEY" \
     -H "anthropic-version: 2023-06-01" \
-    https://api.anthropic.com/v1/models 2>/dev/null)
-  [ "$code" = "200" ] && echo "ok" || echo "fail:http $code"
+    -H "content-type: application/json" \
+    -d '{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' 2>/dev/null)
+  echo "$result" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+if d.get('type') == 'message':
+    print('ok')
+elif d.get('type') == 'error':
+    print('fail:' + d.get('error', {}).get('message', 'unknown'))
+else:
+    print('fail:unexpected response')
+" 2>/dev/null || echo "fail:invalid response"
 }
 
 check_telegram() {
@@ -73,7 +83,15 @@ check_telegram() {
   echo "$result" | python3 -c "import sys,json; d=json.load(sys.stdin); print('ok:@'+d['result']['username'] if d.get('ok') else 'fail:'+d.get('description',''))" 2>/dev/null || echo "fail:invalid response"
 }
 
-echo "{\"github\":\"$(check_github)\",\"anthropic\":\"$(check_anthropic)\",\"telegram\":\"$(check_telegram)\"}"
+check_approved() {
+  if [ -z "$CLAWS_STATUS_APPROVED" ] || [ "$CLAWS_STATUS_APPROVED" = "placeholder" ]; then
+    echo "fail:not configured"
+  else
+    echo "ok:$CLAWS_STATUS_APPROVED"
+  fi
+}
+
+echo "{\"github\":\"$(check_github)\",\"anthropic\":\"$(check_anthropic)\",\"telegram\":\"$(check_telegram)\",\"approved\":\"$(check_approved)\"}"
 """
     out = _ssh(ip, script)
     try:
@@ -166,7 +184,12 @@ def run(
 
     console.print("\n[bold]Credentials:[/]")
     checks = _check_secrets(ip)
-    for label, key in [("GitHub", "github"), ("Anthropic", "anthropic"), ("Telegram", "telegram")]:
+    for label, key in [
+        ("GitHub", "github"),
+        ("Anthropic", "anthropic"),
+        ("Telegram", "telegram"),
+        ("Approved status option", "approved"),
+    ]:
         result = checks.get(key, "")
         if result.startswith("ok"):
             detail = result[3:] if len(result) > 3 else ""

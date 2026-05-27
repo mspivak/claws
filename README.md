@@ -103,7 +103,7 @@ All under `/claws/{project_name}/`:
 | `github/project-number` | Project number |
 | `github/project-id` | GraphQL project ID |
 | `github/status-field-id` | Status field ID |
-| `github/status-{ready,in-progress,blocked,in-review}` | Status option IDs |
+| `github/status-{ready,in-progress,blocked,in-review,approved}` | Status option IDs (`approved` is optional — created only if the project has an "Approved" column) |
 | `anthropic/api-key` | Anthropic API key |
 
 ## Security

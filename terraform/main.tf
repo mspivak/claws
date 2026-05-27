@@ -210,6 +210,14 @@ resource "aws_ssm_parameter" "github_status_in_review" {
   lifecycle { ignore_changes = [value] }
 }
 
+resource "aws_ssm_parameter" "github_status_approved" {
+  name  = "${local.ssm_prefix}/github/status-approved"
+  type  = "String"
+  value = "placeholder"
+
+  lifecycle { ignore_changes = [value] }
+}
+
 resource "aws_ssm_parameter" "anthropic_api_key" {
   name  = "${local.ssm_prefix}/anthropic/api-key"
   type  = "SecureString"

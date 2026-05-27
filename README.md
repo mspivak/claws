@@ -10,9 +10,10 @@
 2. `claws setup-github` — Fetches GitHub project metadata and stores it in SSM
 3. `claws setup-telegram` — Stores Telegram credentials in SSM and reloads OpenClaw config
 4. The EC2 box runs OpenClaw as a systemd user service
-5. A `github-poller` skill checks the GitHub project every 60s, claims READY tasks, and spawns Claude Code ACP sessions in isolated git worktrees
+5. A `github-poller` skill checks the GitHub project every 60s, claims READY tasks, and spawns Claude Code ACP sessions in isolated git worktrees. Issues labelled `epic` are routed to the `project-planner` skill instead of `project-task`.
 6. A `project-task` skill drives each session: it reads the issue, writes tests, implements, opens a PR, and moves the card to In Review — or signals Blocked via Telegram if it can't proceed
 7. A `pr-watcher` skill sweeps In Review cards every 5 minutes, merges PRs that meet the policy, waits for CI on `main` to go green, and moves the card to Approved (or to Blocked on any failure)
+8. A `project-planner` skill decomposes an `epic` Ready card into 3–10 child issues (each with explicit acceptance criteria, none labelled `epic`), seeds them into the project as Ready, and moves the epic to Approved
 
 ## Status lifecycle
 

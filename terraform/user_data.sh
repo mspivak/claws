@@ -191,6 +191,7 @@ SKILLS_DIR="$HOME_DIR/.openclaw/skills"
 mkdir -p "$SKILLS_DIR/github-poller"
 mkdir -p "$SKILLS_DIR/project-task"
 mkdir -p "$SKILLS_DIR/pr-watcher"
+mkdir -p "$SKILLS_DIR/project-planner"
 
 cat > "$SKILLS_DIR/github-poller/skill.md" << 'SKILL'
 # github-poller
@@ -246,6 +247,22 @@ gh api graphql -f query='
 ```
 
 Take up to `AVAILABLE` items from this list. Skip any issue already tracked in `poller-state.json`.
+
+## Step 2b — Choose the skill to dispatch
+
+For each candidate item, fetch the issue's labels:
+
+```bash
+LABELS=$(gh issue view $ISSUE_NUMBER --repo $GITHUB_REPO --json labels -q '[.labels[].name]')
+```
+
+- If the labels include `epic`, dispatch to `project-planner` (decomposes the epic into Ready children).
+- Otherwise, dispatch to `project-task` (default).
+
+The worktree creation and ACP spawn below are otherwise identical — only the skill path
+in the spawned task message changes (`~/.openclaw/skills/project-task/skill.md` vs
+`~/.openclaw/skills/project-planner/skill.md`). For planner dispatches, also include
+`CLAWS_STATUS_READY` and `CLAWS_STATUS_APPROVED` in the environment block.
 
 ## Step 3 — For each READY item
 
@@ -544,6 +561,146 @@ Registered as a scheduled task running every 5 minutes. One pass per invocation,
 - Never modify cards that are not in In Review.
 - A `manual-merge` label always wins — never merge those PRs.
 - Failure transitions are terminal for one pass: a Blocked card is for humans, not this watcher.
+SKILL
+
+cat > "$SKILLS_DIR/project-planner/skill.md" << 'SKILL'
+# project-planner
+
+Non-interactive autonomous agent that decomposes a high-level **epic** issue into 3–10
+small, actionable child issues and seeds them into the GitHub project as Ready.
+Never ask the user questions. If blocked, signal via GitHub and exit.
+
+Counterpart to `project-task`. The `github-poller` dispatches Ready cards labelled `epic`
+here instead of to `project-task`.
+
+## Inputs (environment variables)
+
+- `CLAWS_ISSUE_NUMBER`, `CLAWS_PROJECT_ID`, `CLAWS_ITEM_ID`
+- `CLAWS_STATUS_FIELD_ID`, `CLAWS_STATUS_READY`, `CLAWS_STATUS_IN_PROGRESS`
+- `CLAWS_STATUS_BLOCKED`, `CLAWS_STATUS_APPROVED`
+- `GITHUB_TOKEN`, `GITHUB_REPO`
+
+## Step 0 — Claim the epic
+
+Move to "In Progress". If the mutation fails, exit 0 immediately.
+
+```bash
+gh api graphql -f query='mutation { updateProjectV2ItemFieldValue(input: {
+  projectId: "$CLAWS_PROJECT_ID" itemId: "$CLAWS_ITEM_ID"
+  fieldId: "$CLAWS_STATUS_FIELD_ID"
+  value: { singleSelectOptionId: "$CLAWS_STATUS_IN_PROGRESS" }
+}) { projectV2Item { id } } }'
+```
+
+## Step 1 — Read the epic
+
+```bash
+gh issue view $CLAWS_ISSUE_NUMBER --repo $GITHUB_REPO --json title,body,labels,comments,url
+```
+
+Confirm the `epic` label is present. If missing, go to BLOCKED.
+
+## Step 2 — Decompose
+
+Plan child issues subject to ALL of:
+
+- Between **3 and 10** children (inclusive); otherwise BLOCKED
+- Each child ≤ **4 hours** of focused work
+- Each child has a clear imperative title and an explicit **Acceptance criteria** section
+- Children may use `depends on #N` lines
+- **Never** label any child as `epic` — the planner does not recurse
+
+## Step 3 — Create each child issue
+
+For each child:
+
+```bash
+CHILD_URL=$(gh issue create --repo $GITHUB_REPO \
+  --title "<imperative title>" \
+  --body "## Context
+
+Parent epic: #$CLAWS_ISSUE_NUMBER
+
+<short paragraph>
+
+## Acceptance criteria
+
+- [ ] <testable outcome>
+- [ ] <testable outcome>
+
+## Relevant files
+
+- <path>: <why>
+")
+
+CHILD_NUMBER=$(basename "$CHILD_URL")
+
+CHILD_ITEM_ID=$(gh api graphql -f query='
+  mutation($projectId: ID!, $contentId: ID!) {
+    addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+      item { id }
+    }
+  }
+' -f projectId="$CLAWS_PROJECT_ID" \
+  -F contentId="$(gh issue view $CHILD_NUMBER --repo $GITHUB_REPO --json id -q .id)" \
+  -q .data.addProjectV2ItemById.item.id)
+
+gh api graphql -f query='mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: $projectId itemId: $itemId fieldId: $fieldId
+    value: { singleSelectOptionId: $optionId }
+  }) { projectV2Item { id } }
+}' -f projectId="$CLAWS_PROJECT_ID" -f itemId="$CHILD_ITEM_ID" \
+   -f fieldId="$CLAWS_STATUS_FIELD_ID" -f optionId="$CLAWS_STATUS_READY"
+```
+
+## Step 4 — Comment the checklist on the epic
+
+```bash
+gh issue comment $CLAWS_ISSUE_NUMBER --repo $GITHUB_REPO --body "## Decomposition
+
+- [ ] #<N1> — <title>
+- [ ] #<N2> — <title>
+- [ ] #<N3> — <title>
+
+Each child is sized for ≤4h with explicit acceptance criteria."
+```
+
+## Step 5 — Move the epic to Approved
+
+```bash
+gh api graphql -f query='mutation { updateProjectV2ItemFieldValue(input: {
+  projectId: "$CLAWS_PROJECT_ID" itemId: "$CLAWS_ITEM_ID"
+  fieldId: "$CLAWS_STATUS_FIELD_ID"
+  value: { singleSelectOptionId: "$CLAWS_STATUS_APPROVED" }
+}) { projectV2Item { id } } }'
+```
+
+Exit 0.
+
+## BLOCKED flow
+
+```bash
+gh issue comment $CLAWS_ISSUE_NUMBER --repo $GITHUB_REPO \
+  --body "**Blocked**: <explanation>\n\n**To unblock**: <specific action>"
+
+gh api graphql -f query='mutation { updateProjectV2ItemFieldValue(input: {
+  projectId: "$CLAWS_PROJECT_ID" itemId: "$CLAWS_ITEM_ID"
+  fieldId: "$CLAWS_STATUS_FIELD_ID"
+  value: { singleSelectOptionId: "$CLAWS_STATUS_BLOCKED" }
+}) { projectV2Item { id } } }'
+```
+
+Exit 0.
+
+## Rules
+
+- Never use AskUserQuestion or any interactive tool
+- Never ask for confirmation — proceed or signal blocked
+- Never label any child as `epic` — the planner does not recurse
+- Always produce 3–10 children; otherwise BLOCKED
+- Every child must include an explicit "Acceptance criteria" section
+- Never write code or open a PR — this skill only manages issues and project state
 SKILL
 
 chown -R ec2-user:ec2-user "$SKILLS_DIR"

@@ -79,6 +79,7 @@ CLAWS_STATUS_BLOCKED=$(get_param github/status-blocked)
 CLAWS_STATUS_IN_REVIEW=$(get_param github/status-in-review)
 CLAWS_STATUS_APPROVED=$(get_param github/status-approved)
 ANTHROPIC_API_KEY=$(get_param anthropic/api-key)
+CLAWS_WAIT_FOR_APPROVAL=true
 ENV
 
 if [ -n "$BOT_TOKEN" ] && [ "$BOT_TOKEN" != "placeholder" ]; then
@@ -189,6 +190,7 @@ SERVICE
 SKILLS_DIR="$HOME_DIR/.openclaw/skills"
 mkdir -p "$SKILLS_DIR/github-poller"
 mkdir -p "$SKILLS_DIR/project-task"
+mkdir -p "$SKILLS_DIR/pr-watcher"
 
 cat > "$SKILLS_DIR/github-poller/skill.md" << 'SKILL'
 # github-poller
@@ -206,6 +208,7 @@ Runs every 60 seconds. Polls the GitHub project for READY tasks and spawns Claud
 - `CLAWS_STATUS_IN_PROGRESS`
 - `CLAWS_STATUS_BLOCKED`
 - `CLAWS_STATUS_IN_REVIEW`
+- `CLAWS_STATUS_APPROVED`
 
 ## Step 1 — Check active session count
 
@@ -400,6 +403,149 @@ Exit 0.
 - Never commit directly to main
 SKILL
 
+cat > "$SKILLS_DIR/pr-watcher/skill.md" << 'SKILL'
+# pr-watcher
+
+Runs every 5 minutes. Sweeps the GitHub project's In Review column and advances each card to Approved once its PR is merged and CI on `main` is green. Moves cards to Blocked on any failure mode.
+
+## Environment (loaded from ~/.openclaw/secrets.env)
+
+- `GITHUB_TOKEN`, `GITHUB_REPO`
+- `CLAWS_PROJECT_ID`, `CLAWS_STATUS_FIELD_ID`
+- `CLAWS_STATUS_IN_REVIEW`, `CLAWS_STATUS_BLOCKED`, `CLAWS_STATUS_APPROVED`
+- `CLAWS_WAIT_FOR_APPROVAL` — `true` (default) or `false`
+- Per-PR label overrides: `auto-merge` (force wait=false), `manual-merge` (skip)
+
+## Step 1 — Source secrets
+
+```bash
+source ~/.openclaw/secrets.env
+WAIT_FOR_APPROVAL="${CLAWS_WAIT_FOR_APPROVAL:-true}"
+```
+
+## Step 2 — Fetch In Review cards
+
+```bash
+gh api graphql -f query='
+  query($projectId: ID!) {
+    node(id: $projectId) {
+      ... on ProjectV2 {
+        items(first: 50) {
+          nodes {
+            id
+            content { ... on Issue { number title url } }
+            fieldValueByName(name: "Status") {
+              ... on ProjectV2ItemFieldSingleSelectValue { optionId }
+            }
+          }
+        }
+      }
+    }
+  }
+' -f projectId="$CLAWS_PROJECT_ID" \
+| jq --arg s "$CLAWS_STATUS_IN_REVIEW" \
+  '[.data.node.items.nodes[] | select(.fieldValueByName.optionId == $s) | select(.content.number != null)]'
+```
+
+If the list is empty, exit 0.
+
+## Step 3 — For each In Review item (ITEM_ID, ISSUE_NUMBER)
+
+### 3a — Find the linked PR
+
+```bash
+PR_JSON=$(gh pr list --repo "$GITHUB_REPO" --state open --search "linked:$ISSUE_NUMBER" --json number,labels,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup,url --limit 1)
+PR_NUMBER=$(echo "$PR_JSON" | jq -r '.[0].number // empty')
+```
+
+If no open PR is linked, look for a merged PR with `--state merged` and jump to Step 4 with that PR's mergeCommit. If neither exists, skip the item.
+
+### 3b — Check label overrides
+
+- `manual-merge` → skip this item.
+- `auto-merge` → `EFFECTIVE_WAIT=false`.
+- Otherwise → `EFFECTIVE_WAIT="$WAIT_FOR_APPROVAL"`.
+
+### 3c — Review decision
+
+- `CHANGES_REQUESTED` → failure: comment with PR URL, move card to Blocked (Step 5), skip.
+- `EFFECTIVE_WAIT=true` and not `APPROVED` → skip (wait for next tick).
+- `EFFECTIVE_WAIT=false` → proceed.
+
+### 3d — CI on the PR
+
+Inspect `statusCheckRollup`. If any conclusion is `FAILURE`/`TIMED_OUT`/`CANCELLED`/`ACTION_REQUIRED` → failure: comment with `$URL/checks`, move to Blocked, skip. If any check is still in progress → skip (wait for next tick). Otherwise → proceed.
+
+### 3e — Mergeability
+
+If `mergeable=="CONFLICTING"` or `mergeStateStatus=="DIRTY"` → failure (merge conflict): comment with PR URL, move to Blocked, skip.
+
+### 3f — Squash-merge
+
+```bash
+gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPO" --squash --delete-branch --auto=false
+```
+
+If the command fails, treat as merge conflict failure. Capture `MERGE_COMMIT` from `gh pr view`.
+
+## Step 4 — Post-merge handling
+
+Check CI on `main` at `MERGE_COMMIT` once per cron tick (do not loop):
+
+```bash
+gh api "repos/$GITHUB_REPO/commits/$MERGE_COMMIT/check-runs"
+```
+
+- Any failure conclusion → comment with `https://github.com/$GITHUB_REPO/commit/$MERGE_COMMIT/checks`, move to Blocked.
+- Any pending → leave card in In Review; next tick will re-check.
+- All success → move card to Approved:
+
+```bash
+gh api graphql -f query='
+  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+    updateProjectV2ItemFieldValue(input: {
+      projectId: $projectId, itemId: $itemId, fieldId: $fieldId
+      value: { singleSelectOptionId: $optionId }
+    }) { projectV2Item { id } }
+  }
+' -f projectId="$CLAWS_PROJECT_ID" -f itemId="$ITEM_ID" \
+  -f fieldId="$CLAWS_STATUS_FIELD_ID" -f optionId="$CLAWS_STATUS_APPROVED"
+```
+
+Clean up the worktree:
+
+```bash
+WORKTREE="$HOME/worktrees/issue-$ISSUE_NUMBER"
+git -C "$HOME/repo" worktree remove --force "$WORKTREE" 2>/dev/null || true
+git -C "$HOME/repo" branch -D "issue-$ISSUE_NUMBER" 2>/dev/null || true
+```
+
+## Step 5 — Blocked transition (failure helper)
+
+```bash
+gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPO" --body "$BODY"
+gh api graphql -f query='
+  mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+    updateProjectV2ItemFieldValue(input: {
+      projectId: $projectId, itemId: $itemId, fieldId: $fieldId
+      value: { singleSelectOptionId: $optionId }
+    }) { projectV2Item { id } }
+  }
+' -f projectId="$CLAWS_PROJECT_ID" -f itemId="$ITEM_ID" \
+  -f fieldId="$CLAWS_STATUS_FIELD_ID" -f optionId="$CLAWS_STATUS_BLOCKED"
+```
+
+## Schedule
+
+Registered as a scheduled task running every 5 minutes. One pass per invocation, then exit.
+
+## Rules
+
+- Never modify cards that are not in In Review.
+- A `manual-merge` label always wins — never merge those PRs.
+- Failure transitions are terminal for one pass: a Blocked card is for humans, not this watcher.
+SKILL
+
 chown -R ec2-user:ec2-user "$SKILLS_DIR"
 
 # ── 12. Install OpenClaw daemon and enable services ──────────────────────────
@@ -432,6 +578,15 @@ sudo -u ec2-user bash -c "
     --agent claude \
     --model claude-haiku-4-5-20251001 \
     --message 'Read ~/.openclaw/skills/github-poller/skill.md and follow it exactly.' \
+    --light-context \
+    --timeout-seconds 120
+  openclaw cron add \
+    --name pr-watcher \
+    --every 5m \
+    --session isolated \
+    --agent claude \
+    --model claude-haiku-4-5-20251001 \
+    --message 'Read ~/.openclaw/skills/pr-watcher/skill.md and follow it exactly.' \
     --light-context \
     --timeout-seconds 120
 "

@@ -10,6 +10,29 @@
 4. The EC2 box runs OpenClaw as a systemd user service
 5. A `github-poller` skill checks the GitHub project every 60s, claims READY tasks, and spawns Claude Code ACP sessions in isolated git worktrees
 6. A `project-task` skill drives each session: it reads the issue, writes tests, implements, opens a PR, and moves the card to In Review — or signals Blocked via Telegram if it can't proceed
+7. A `pr-watcher` skill sweeps In Review cards every 5 minutes, merges PRs that meet the policy, waits for CI on `main` to go green, and moves the card to Approved (or to Blocked on any failure)
+
+## Status lifecycle
+
+```
+Ready → In Progress → In Review → Approved
+                ↘            ↘
+                 Blocked     Blocked
+```
+
+- `Ready → In Progress`: `github-poller` claims the task and spawns a session
+- `In Progress → In Review`: `project-task` opens a PR
+- `In Review → Approved`: `pr-watcher` merges the PR and waits for `main` CI to go green
+- Anything → `Blocked`: failure mode (ambiguous issue, CHANGES_REQUESTED review, failing CI, merge conflict)
+
+The `pr-watcher` skill is configured via env vars + per-PR labels:
+
+| Setting | Default | Effect |
+|---|---|---|
+| `CLAWS_WAIT_FOR_APPROVAL=true` | yes | Require ≥1 approving review AND green checks before merging |
+| `CLAWS_WAIT_FOR_APPROVAL=false` |  | Merge as soon as checks are green |
+| label `auto-merge` |  | Per-PR override: behave as if `CLAWS_WAIT_FOR_APPROVAL=false` |
+| label `manual-merge` |  | Per-PR override: skip entirely; human merges by hand |
 
 ## Prerequisites
 

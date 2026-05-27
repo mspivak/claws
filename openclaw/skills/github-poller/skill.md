@@ -13,6 +13,7 @@ Runs every 60 seconds. Polls the GitHub project for READY tasks and spawns Claud
 - `CLAWS_STATUS_IN_PROGRESS`
 - `CLAWS_STATUS_BLOCKED`
 - `CLAWS_STATUS_IN_REVIEW`
+- `CLAWS_STATUS_APPROVED`
 
 ## Step 1 — Check capacity
 

@@ -12,8 +12,14 @@ You must never ask the user questions. If you are blocked, signal it via GitHub 
 - `CLAWS_STATUS_IN_PROGRESS` — option ID for "In Progress"
 - `CLAWS_STATUS_BLOCKED` — option ID for "Blocked"
 - `CLAWS_STATUS_IN_REVIEW` — option ID for "In Review"
+- `CLAWS_STATUS_APPROVED` — option ID for "Approved" (not used by this skill; consumed by the `pr-watcher` skill that advances cards from In Review → Approved)
 - `GITHUB_TOKEN` — GitHub PAT
 - `GITHUB_REPO` — org/repo
+
+## Scope
+
+This skill drives a task from **Ready → In Progress → In Review** (or Blocked).
+A separate `pr-watcher` skill (`openclaw/skills/pr-watcher/skill.md`) sweeps the In Review column on a cron and advances each card to **Approved** once its PR is merged and CI on `main` is green. Do not attempt to merge the PR or move the card past In Review from this skill — exit as soon as the In Review transition succeeds.
 
 ## Step 0 — Claim the task
 

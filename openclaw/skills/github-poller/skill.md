@@ -135,6 +135,22 @@ gh api graphql -f query='
 
 Take up to `AVAILABLE` items from this list. Skip any issue already tracked in `poller-state.json`.
 
+## Step 2b — Choose the skill to dispatch
+
+For each candidate item, fetch the issue's labels:
+
+```bash
+LABELS=$(gh issue view $ISSUE_NUMBER --repo $GITHUB_REPO --json labels -q '[.labels[].name]')
+```
+
+- If the labels include `epic`, dispatch to `project-planner` (decomposes the epic into Ready children).
+- Otherwise, dispatch to `project-task` (default).
+
+The worktree creation and ACP spawn below are otherwise identical — only the skill path
+in the spawned task message changes (`~/.openclaw/skills/project-task/skill.md` vs
+`~/.openclaw/skills/project-planner/skill.md`). For planner dispatches, also include
+`CLAWS_STATUS_READY` and `CLAWS_STATUS_APPROVED` in the environment block.
+
 ## Step 3 — For each READY item
 
 For each item (`ITEM_ID`, `ISSUE_NUMBER`):

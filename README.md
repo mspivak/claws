@@ -70,6 +70,16 @@ claws status --project myapp --region us-east-1
 claws destroy --project myapp --region us-east-1
 ```
 
+## Run from your laptop
+
+If you don't want a long-running EC2 box, you can drive the same workflow from Claude Code on your laptop. The [`poll-project`](skills/poll-project/skill.md) skill does one pass over the project's Ready cards and dispatches a `project-task` subagent for each one (up to `maxConcurrent`, default 1).
+
+1. Copy `.claws.example.json` to `.claws.json` at the repo root and fill in `projectNumber` / `owner`.
+2. Make sure `gh auth status` works locally — the skill uses your local `gh` token (no SSM).
+3. In Claude Code, invoke `/poll-project` from the repo root. Optionally wrap it in `/loop 5m /poll-project` for periodic re-polling within a session.
+
+Each dispatched subagent runs in a sibling git worktree at `<worktreeParent>/<repo>-issue-N` on branch `issue-N`, follows the `project-task` skill, opens a PR, and moves the card to In Review (or Blocked).
+
 ## Architecture
 
 ```

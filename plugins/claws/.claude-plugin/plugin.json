@@ -1,0 +1,14 @@
+{
+  "name": "claws",
+  "displayName": "Claws",
+  "description": "Autonomous GitHub-Project automation: poll Ready cards, decompose epics, and drive issues to PRs in isolated worktrees.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Mauro Spivak",
+    "email": "mauro.spivak@gmail.com"
+  },
+  "homepage": "https://github.com/mspivak/claws",
+  "repository": "https://github.com/mspivak/claws",
+  "license": "MIT",
+  "keywords": ["github", "projects", "automation", "agents", "workflow"]
+}

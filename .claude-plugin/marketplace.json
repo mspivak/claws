@@ -1,0 +1,20 @@
+{
+  "name": "claws-skills",
+  "owner": {
+    "name": "Mauro Spivak",
+    "email": "mauro.spivak@gmail.com"
+  },
+  "description": "Autonomous GitHub-Project automation skills: poll Ready cards, plan epics, and drive issues to PRs.",
+  "plugins": [
+    {
+      "name": "claws",
+      "source": "./plugins/claws",
+      "description": "Drive a GitHub Project board autonomously: work-on-pending picks up Ready cards, plan decomposes epics, work-on-task takes an issue from Ready to In Review in its own worktree.",
+      "version": "1.0.0",
+      "author": { "name": "Mauro Spivak" },
+      "homepage": "https://github.com/mspivak/claws",
+      "repository": "https://github.com/mspivak/claws",
+      "keywords": ["github", "projects", "automation", "agents", "workflow"]
+    }
+  ]
+}

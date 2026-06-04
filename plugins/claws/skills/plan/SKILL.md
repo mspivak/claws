@@ -1,86 +1,102 @@
 ---
 name: plan
-description: Autonomous, non-interactive agent that decomposes a high-level epic GitHub issue into 3-10 small, actionable Ready child issues seeded into the GitHub Project. Counterpart to work-on-task; dispatched for cards labelled epic. Never asks questions — signals Blocked via GitHub and exits.
-disable-model-invocation: true
+description: Developer-invoked planner. Takes a PRD — either inline prompt text or a path to a markdown file — decomposes it into small, actionable tasks, and seeds them directly into the GitHub Project's Ready column. Reads project config from .claws.json. Run after init-project and before work-on-pending.
+argument-hint: "<prd text> | path/to/prd.md"
 ---
 
 # plan
 
-You are a non-interactive autonomous agent that decomposes a high-level **epic** issue
-into 3–10 small, actionable child issues and seeds them into the GitHub project as Ready.
-You must never ask the user questions. If you are blocked, signal it via GitHub and exit.
+The second step of the local claws workflow:
 
-This skill is the counterpart to `work-on-task`. The `github-poller` dispatches Ready
-cards labelled `epic` here instead of to `work-on-task`.
+1. `init-project` — repo + project created
+2. **`plan <prd>`** — decompose a PRD into tasks, seed them into Ready  ← this skill
+3. `work-on-pending` — dispatch one agent per Ready card
 
-## Inputs (environment variables set by the poller)
+You take a PRD from the developer, break it into small, independently-shippable tasks, and
+create one GitHub issue per task as a Ready card on the project. You read project config from
+`.claws.json` and use the local `gh` token — no env vars, no poller, no SSM.
 
-- `CLAWS_ISSUE_NUMBER` — GitHub issue number for the epic
-- `CLAWS_PROJECT_ID` — GraphQL project ID (PVT_...)
-- `CLAWS_ITEM_ID` — GraphQL project item ID for the epic
-- `CLAWS_STATUS_FIELD_ID` — GraphQL status field ID
-- `CLAWS_STATUS_READY` — option ID for "Ready"
-- `CLAWS_STATUS_IN_PROGRESS` — option ID for "In Progress"
-- `CLAWS_STATUS_BLOCKED` — option ID for "Blocked"
-- `CLAWS_STATUS_APPROVED` — option ID for "Approved" (terminal state for the epic)
-- `GITHUB_TOKEN` — GitHub PAT
-- `GITHUB_REPO` — org/repo
+## Inputs
 
-## Step 0 — Claim the epic
+The PRD comes from the skill argument:
 
-Move the epic to "In Progress" atomically. If this fails, someone else claimed it — exit immediately.
+- If the argument is a path to an existing file (e.g. `docs/prd.md`), read that file as the PRD.
+- Otherwise treat the entire argument text as the PRD itself.
+- If no argument is given, stop and ask the developer for a PRD — either pasted text or a path.
+
+Project config is resolved the same way `work-on-pending` does:
+
+- `.claws.json` at the repo root supplies `owner` and `projectNumber` (and `projectUrl`).
+- `GITHUB_REPO` comes from `gh repo view --json nameWithOwner -q .nameWithOwner`.
+
+## Step 1 — Load the PRD
+
+Resolve the argument to PRD text per the rule above. Read the whole thing carefully. If it
+points at a file, read the full file. The PRD is the single source of truth for what to build.
+
+## Step 2 — Load project metadata
+
+Read `.claws.json` for `owner` and `projectNumber`. Resolve `GITHUB_REPO`:
+
+```bash
+GITHUB_REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+```
+
+Fetch the project id, status field id, and the **Ready** option id (the only status this skill
+writes). Use the query matching the owner type — `user` shown; swap to `organization` for orgs.
+Detect from `projectUrl` (`/users/` vs `/orgs/`); if absent, try `user` first then `organization`.
 
 ```bash
 gh api graphql -f query='
-  mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: "$CLAWS_PROJECT_ID"
-      itemId: "$CLAWS_ITEM_ID"
-      fieldId: "$CLAWS_STATUS_FIELD_ID"
-      value: { singleSelectOptionId: "$CLAWS_STATUS_IN_PROGRESS" }
-    }) { projectV2Item { id } }
+  query($owner: String!, $number: Int!) {
+    user(login: $owner) {
+      projectV2(number: $number) {
+        id
+        field(name: "Status") {
+          ... on ProjectV2SingleSelectField { id options { id name } }
+        }
+      }
+    }
   }
-'
+' -f owner="$OWNER" -F number="$PROJECT_NUMBER"
 ```
 
-If the mutation returns an error, exit 0 immediately.
+Extract `PROJECT_ID`, `STATUS_FIELD_ID`, and the option id whose name is `Ready` (case-insensitive)
+as `STATUS_READY`. If there is no `Ready` option, stop and tell the developer to run `init-project`
+(or `claws setup-github`) to set up the Status field first.
 
-## Step 1 — Read the epic
+## Step 3 — Decompose
 
-```bash
-gh issue view $CLAWS_ISSUE_NUMBER --repo $GITHUB_REPO --json title,body,labels,comments,url
-```
+Turn the PRD into a flat list of tasks. The plan must satisfy ALL of these:
 
-Read the full epic body and all comments carefully. Confirm the issue has the `epic` label.
-If the `epic` label is missing, this skill was dispatched in error — go to the BLOCKED flow.
+- Each task is **independently shippable** and sized for **≤4 hours** of focused work for one agent.
+- Each task has a clear imperative title (verb + noun, e.g. "Add foo to bar").
+- Each task body has an **Acceptance criteria** section with concrete, testable checkboxes.
+- Tasks may reference each other with `depends on #N` lines when ordering matters (you won't know
+  the numbers until creation — use the running list from Step 4 to backfill dependency references,
+  or phrase dependencies by title and note them in a final summary comment).
+- Aim for a flat decomposition. If a task would clearly take more than ~4 hours, split it. Do not
+  create nested "epics" — every task is a leaf the `work-on-task` agent can complete end to end.
 
-## Step 2 — Decompose
+If the PRD is too thin to derive concrete tasks, ask the developer focused clarifying questions
+before creating anything — this skill runs in the foreground, so it is fine to ask here (unlike
+`work-on-task`/`work-on-pending`, which must never ask). Where the PRD is merely underspecified
+on details an engineer would reasonably decide, make a sensible assumption and record it in the
+task body under an **Assumptions** heading rather than blocking.
 
-Plan the decomposition. The plan must satisfy ALL of these constraints:
+## Step 4 — Create each task as a Ready card
 
-- Between **3 and 10** child issues (inclusive). Fewer than 3 means the epic was too small
-  for decomposition; more than 10 means you're slicing too thin or the epic is actually
-  multiple epics — go to BLOCKED in either case.
-- Each child must be **≤4 hours** of focused work for one agent.
-- Each child must have a clear imperative title (verb + noun, e.g. "Add foo to bar").
-- Each child body must include an **Acceptance criteria** section with concrete checkboxes.
-- Children may reference each other with `depends on #N` lines when ordering matters.
-- **Do NOT label any child as `epic`.** The planner must never recurse. If you think a
-  child needs further decomposition, the child is too big — split it differently.
-
-## Step 3 — Create each child issue
-
-For each planned child, create the issue, add it to the project, and move it to Ready.
+For each planned task: create the issue, add it to the project, and move it to Ready.
 
 ```bash
-CHILD_URL=$(gh issue create \
-  --repo $GITHUB_REPO \
-  --title "<imperative child title>" \
+TASK_URL=$(gh issue create \
+  --repo "$GITHUB_REPO" \
+  --title "<imperative task title>" \
   --body "## Context
 
-Parent epic: #$CLAWS_ISSUE_NUMBER
+Source PRD: <file path, or 'provided inline'>
 
-<one paragraph explaining what this child does and why>
+<one paragraph: what this task delivers and why>
 
 ## Acceptance criteria
 
@@ -92,16 +108,16 @@ Parent epic: #$CLAWS_ISSUE_NUMBER
 - <path/to/file>: <why it matters>
 ")
 
-CHILD_NUMBER=$(basename "$CHILD_URL")
+TASK_NUMBER=$(basename "$TASK_URL")
 
-CHILD_ITEM_ID=$(gh api graphql -f query='
+TASK_ITEM_ID=$(gh api graphql -f query='
   mutation($projectId: ID!, $contentId: ID!) {
     addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
       item { id }
     }
   }
-' -f projectId="$CLAWS_PROJECT_ID" \
-  -F contentId="$(gh issue view $CHILD_NUMBER --repo $GITHUB_REPO --json id -q .id)" \
+' -f projectId="$PROJECT_ID" \
+  -F contentId="$(gh issue view "$TASK_NUMBER" --repo "$GITHUB_REPO" --json id -q .id)" \
   -q .data.addProjectV2ItemById.item.id)
 
 gh api graphql -f query='
@@ -113,94 +129,37 @@ gh api graphql -f query='
       value: { singleSelectOptionId: $optionId }
     }) { projectV2Item { id } }
   }
-' -f projectId="$CLAWS_PROJECT_ID" \
-  -f itemId="$CHILD_ITEM_ID" \
-  -f fieldId="$CLAWS_STATUS_FIELD_ID" \
-  -f optionId="$CLAWS_STATUS_READY"
+' -f projectId="$PROJECT_ID" \
+  -f itemId="$TASK_ITEM_ID" \
+  -f fieldId="$STATUS_FIELD_ID" \
+  -f optionId="$STATUS_READY"
 ```
 
-Keep a running list of `(CHILD_NUMBER, CHILD_TITLE, CHILD_URL)` tuples for the summary comment.
+Keep a running list of `(TASK_NUMBER, TASK_TITLE, TASK_URL)` for the summary.
 
-**Never** pass `--label epic` or any flag that would mark a child as an epic. Children
-are leaf tasks for `work-on-task`.
+## Step 5 — Summary
 
-## Step 4 — Comment on the epic with the checklist
+Print a compact table of what was created and the next action:
 
-```bash
-gh issue comment $CLAWS_ISSUE_NUMBER \
-  --repo $GITHUB_REPO \
-  --body "## Decomposition
-
-This epic has been decomposed into the following child issues:
-
-- [ ] #<N1> — <title>
-- [ ] #<N2> — <title>
-- [ ] #<N3> — <title>
-
-Each child is sized for ≤4 hours of work and has explicit acceptance criteria.
-The poller will pick them up from Ready in turn."
 ```
+Seeded N task(s) into Ready on <projectUrl>:
 
-## Step 5 — Move the epic to Approved
+  #12  Add foo to bar          https://github.com/<owner>/<repo>/issues/12
+  #13  Wire baz into the API   https://github.com/<owner>/<repo>/issues/13
 
-The epic itself is now "done" from the planner's perspective — its work is the
-decomposition, not the implementation.
-
-```bash
-gh api graphql -f query='
-  mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: "$CLAWS_PROJECT_ID"
-      itemId: "$CLAWS_ITEM_ID"
-      fieldId: "$CLAWS_STATUS_FIELD_ID"
-      value: { singleSelectOptionId: "$CLAWS_STATUS_APPROVED" }
-    }) { projectV2Item { id } }
-  }
-'
+Next: run /work-on-pending to start one agent per Ready card.
 ```
-
-Exit 0.
-
----
-
-## BLOCKED flow
-
-Use this whenever you cannot decompose the epic safely. Common reasons:
-
-- Epic body is too vague to derive concrete child tasks
-- Decomposition would require fewer than 3 or more than 10 children
-- The `epic` label is missing (dispatched in error)
-- A required child would clearly take more than 4 hours and cannot be split further
-
-```bash
-gh issue comment $CLAWS_ISSUE_NUMBER \
-  --repo $GITHUB_REPO \
-  --body "**Blocked**: <clear explanation of why decomposition is not possible>
-
-**To unblock**: <specific action the human must take — e.g. add detail, split the epic, remove the label>"
-
-gh api graphql -f query='
-  mutation {
-    updateProjectV2ItemFieldValue(input: {
-      projectId: "$CLAWS_PROJECT_ID"
-      itemId: "$CLAWS_ITEM_ID"
-      fieldId: "$CLAWS_STATUS_FIELD_ID"
-      value: { singleSelectOptionId: "$CLAWS_STATUS_BLOCKED" }
-    }) { projectV2Item { id } }
-  }
-'
-```
-
-Exit 0.
 
 ---
 
 ## Rules
 
-- Never use `AskUserQuestion` or any interactive tool
-- Never ask for confirmation — either proceed or signal blocked
-- Never label any child issue as `epic` — the planner does not recurse
-- Always produce between 3 and 10 children; otherwise BLOCKED
-- Every child must include an explicit "Acceptance criteria" section
-- Never write code or open a PR — this skill only manages issues and project state
-- The working directory is a scratch worktree; do not commit anything from it
+- Read the PRD in full before decomposing — do not plan from the title alone.
+- Every task must be a leaf sized ≤4 hours with an explicit "Acceptance criteria" section.
+- Never create nested epics and never recurse — this skill emits a flat list of leaf tasks.
+- Only ever set cards to **Ready** — claiming, In Progress, and review transitions belong to the
+  downstream `work-on-task` agent.
+- Never write code or open a PR — this skill only creates issues and project cards.
+- Resolve all IDs from `.claws.json` + local `gh` auth. Never invent issue numbers or project IDs.
+- Ask clarifying questions only when the PRD is too vague to produce concrete tasks; otherwise
+  record reasonable assumptions in the task body and proceed.

@@ -1,7 +1,7 @@
 {
   "name": "claws",
   "displayName": "Claws",
-  "description": "Autonomous GitHub-Project automation: poll Ready cards, decompose epics, and drive issues to PRs in isolated worktrees.",
+  "description": "Local GitHub-Project automation: bootstrap a repo + project, plan a PRD into Ready tasks, and drive each card to a PR in its own worktree.",
   "version": "1.0.0",
   "author": {
     "name": "Mauro Spivak",

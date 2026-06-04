@@ -4,12 +4,12 @@
     "name": "Mauro Spivak",
     "email": "mauro.spivak@gmail.com"
   },
-  "description": "Autonomous GitHub-Project automation skills: poll Ready cards, plan epics, and drive issues to PRs.",
+  "description": "Local GitHub-Project automation skills: bootstrap a repo + project, plan a PRD into Ready tasks, and drive issues to PRs.",
   "plugins": [
     {
       "name": "claws",
       "source": "./plugins/claws",
-      "description": "Drive a GitHub Project board autonomously: work-on-pending picks up Ready cards, plan decomposes epics, work-on-task takes an issue from Ready to In Review in its own worktree.",
+      "description": "Drive a GitHub Project board locally: init-project bootstraps the repo + project, plan decomposes a PRD into Ready tasks, work-on-pending picks up Ready cards, work-on-task takes an issue from Ready to In Review in its own worktree.",
       "version": "1.0.0",
       "author": { "name": "Mauro Spivak" },
       "homepage": "https://github.com/mspivak/claws",

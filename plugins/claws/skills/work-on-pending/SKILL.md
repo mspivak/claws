@@ -77,30 +77,52 @@ If any option is missing, print which one and exit.
 
 ## Step 3 — List Ready cards
 
+The `items` connection caps at 100 nodes per page and has **no server-side status filter** — the project board's Status filter is a client-side feature, so the API/CLI always returns every status and you filter locally. A project with more than one page of items will silently hide Ready cards if you fetch a single page. **Always paginate to exhaustion**, then filter.
+
+Walk every page with the `pageInfo` cursor, accumulate all nodes, and only then select the Ready ones:
+
 ```bash
-gh api graphql -f query='
-  query($projectId: ID!) {
-    node(id: $projectId) {
-      ... on ProjectV2 {
-        items(first: 50) {
-          nodes {
-            id
-            content { ... on Issue { number title url } }
-            fieldValueByName(name: "Status") {
-              ... on ProjectV2ItemFieldSingleSelectValue { optionId }
+CURSOR=null
+ALL_ITEMS='[]'
+while :; do
+  PAGE=$(gh api graphql -f query='
+    query($projectId: ID!, $cursor: String) {
+      node(id: $projectId) {
+        ... on ProjectV2 {
+          items(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              id
+              content { ... on Issue { number title url } }
+              fieldValueByName(name: "Status") {
+                ... on ProjectV2ItemFieldSingleSelectValue { optionId }
+              }
             }
           }
         }
       }
     }
-  }
-' -f projectId="$PROJECT_ID" \
-| jq --arg ready "$STATUS_READY" '
-    [.data.node.items.nodes[]
+  ' -f projectId="$PROJECT_ID" -F cursor="$CURSOR")
+
+  ALL_ITEMS=$(jq -n --argjson acc "$ALL_ITEMS" --argjson page "$PAGE" \
+    '$acc + $page.data.node.items.nodes')
+
+  HAS_NEXT=$(jq -r '.data.node.items.pageInfo.hasNextPage' <<<"$PAGE")
+  [ "$HAS_NEXT" = "true" ] || break
+  CURSOR=$(jq -r '.data.node.items.pageInfo.endCursor' <<<"$PAGE")
+done
+
+READY=$(jq --arg ready "$STATUS_READY" '
+    [.[]
      | select(.fieldValueByName.optionId == $ready)
      | select(.content.number != null)]
-  '
+  ' <<<"$ALL_ITEMS")
+echo "$READY"
 ```
+
+`-F cursor="$CURSOR"` sends `null` as a real JSON null on the first iteration (so `after: null` fetches page 1), then the literal end-cursor string on later iterations.
+
+> Higher-level alternative: `gh project item-list "$PROJECT_NUMBER" --owner "$OWNER" --format json -L 1000` paginates for you (the `-L`/`--limit` flag is the page-walk, not a server filter). It still returns all statuses, so you still filter client-side on `.status == "Ready"`. The raw GraphQL loop above is kept because it returns the project-item `id` needed for the claim mutation in Step 5.
 
 ## Step 4 — Filter in-flight issues
 

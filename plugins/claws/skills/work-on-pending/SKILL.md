@@ -44,6 +44,32 @@ Read `.claws.json` from the current working directory. If missing, fall back to 
 
 Resolve `GITHUB_REPO` from `gh repo view --json nameWithOwner -q .nameWithOwner`.
 
+## Step 1.5 — Reap merged worktrees
+
+Before discovering new work, sweep the existing `issue-N` worktrees and clean up any whose PR has already merged. This keeps `<worktreeParent>` from accumulating stale checkouts as the loop runs. Only a **merged** PR triggers removal — In Review, Blocked, errored, and open-PR worktrees are left untouched so the operator can still inspect them.
+
+```bash
+REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
+for wt in $(git worktree list --porcelain | awk '/^worktree /{print $2}'); do
+  base=$(basename "$wt")
+  case "$base" in
+    "${REPO_NAME}-issue-"*)
+      N="${base##*-issue-}"
+      STATE=$(gh pr list --repo "$GITHUB_REPO" --head "issue-${N}" --state all --json state -q '.[0].state' 2>/dev/null)
+      if [ "$STATE" = "MERGED" ]; then
+        git worktree remove "$wt" --force
+        git branch -D "issue-${N}" 2>/dev/null || true
+        git push origin --delete "issue-${N}" 2>/dev/null || true
+        echo "reaped issue-${N} (PR merged)"
+      fi
+      ;;
+  esac
+done
+git worktree prune
+```
+
+Never reap the repo root worktree or any worktree whose `issue-N` branch has no merged PR. The remote branch is usually auto-deleted by GitHub on merge, so the `git push --delete` is best-effort.
+
 ## Step 2 — Discover project metadata
 
 The poller needs the same IDs the `work-on-task` skill consumes. Fetch them via GraphQL using local `gh` auth:
@@ -223,6 +249,6 @@ If no Ready cards were available, print `No Ready cards.` and exit.
 ## Rules
 
 - Never push to `main` directly from this skill — only the subagent pushes, and only to `issue-N`.
-- Never delete the worktree from this skill. Leave cleanup to the operator (or a separate skill) so the user can inspect failures.
+- Worktree cleanup is automatic but conservative: Step 1.5 removes a worktree (and its local/remote `issue-N` branch) **only** when its PR has merged. Never delete a worktree for an In Review, Blocked, errored, or open-PR issue — leave those for the operator to inspect.
 - If `gh auth status` fails, exit with a clear message — do not try to recover.
 - Serial dispatch only. Parallel `Agent` calls are technically possible but out of scope for this skill (the issue body calls this out).

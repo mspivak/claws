@@ -77,6 +77,11 @@ Turn the PRD into a flat list of tasks. The plan must satisfy ALL of these:
   or phrase dependencies by title and note them in a final summary comment).
 - Aim for a flat decomposition. If a task would clearly take more than ~4 hours, split it. Do not
   create nested "epics" — every task is a leaf the `work-on-task` agent can complete end to end.
+- **Order for an early demoable slice.** The first cards should form a thin end-to-end vertical
+  slice the developer can run or click as soon as possible — not horizontal layers (all-backend,
+  then all-frontend). Front-load whatever makes the feature testable soonest, even if parts are
+  stubbed; defer depth and polish to later cards. When the PRD spans phases, mark the boundary in
+  the title (e.g. `[P1a] …`) and gate later phases behind the slice with `depends on #N`.
 
 If the PRD is too thin to derive concrete tasks, ask the developer focused clarifying questions
 before creating anything — this skill runs in the foreground, so it is fine to ask here (unlike

@@ -156,9 +156,36 @@ Read `.claws/state.json` if it exists (initialize to `{"inflight": []}` otherwis
 
 `.claws/` is gitignored.
 
+## Step 4.5 — Gate on dependencies
+
+`plan` may give a card `depends on #N` lines in its body. Only dispatch a card once every `#N` it
+depends on is either merged to `main` or available as a branch this card can build on. For each
+remaining Ready card, read its body and collect the dependencies:
+
+```bash
+DEPS=$(gh issue view "$ISSUE_NUMBER" --repo "$GITHUB_REPO" --json body -q .body \
+  | grep -oiE 'depends on #[0-9]+' | grep -oE '[0-9]+' | sort -u)
+```
+
+Look up each dep's project Status and decide a single `BASE_BRANCH` for the card (default `main`):
+
+- **Done, or its PR is merged** → satisfied; the card bases off `main`.
+- **In Review / In Progress with an open `issue-N` branch** → not on `main` yet but usable as a
+  base. Dispatch the card *stacked*: set `BASE_BRANCH=issue-N` so it has the dependency's code.
+- **Ready / Blocked / no branch** → unsatisfied. Skip the card this pass; a later pass picks it up
+  once the dependency advances.
+
+If a card depends on more than one still-in-flight card, prefer skipping it — combining several
+in-flight branches is the operator's call, not the poller's (a card may only stack on one base).
+
 ## Step 5 — Dispatch up to `maxConcurrent`
 
-Take the first `maxConcurrent` filtered cards. For each one, serially:
+Take the first `maxConcurrent` dispatchable cards (Ready, not in-flight, dependencies satisfied per
+Step 4.5). Claim each (5a), create its worktree (5b), and record it in-flight (5c); then spawn all
+of their subagents in a single batch of **background** `Agent` calls so they run concurrently.
+Collect outcomes as they report back.
+
+For each card:
 
 ### 5a — Claim atomically
 
@@ -184,8 +211,9 @@ If the mutation errors (someone else claimed it), skip this card and continue.
 ```bash
 REPO_NAME=$(basename "$(git rev-parse --show-toplevel)")
 WORKTREE="$WORKTREE_PARENT/${REPO_NAME}-issue-${ISSUE_NUMBER}"
-git fetch origin main
-git worktree add "$WORKTREE" -b "issue-${ISSUE_NUMBER}" origin/main 2>/dev/null \
+BASE_BRANCH="${BASE_BRANCH:-main}"   # main, or a dependency's issue-N branch (Step 4.5)
+git fetch origin "$BASE_BRANCH"
+git worktree add "$WORKTREE" -b "issue-${ISSUE_NUMBER}" "origin/$BASE_BRANCH" 2>/dev/null \
   || git worktree add "$WORKTREE" "issue-${ISSUE_NUMBER}"
 ```
 
@@ -197,7 +225,7 @@ Append `ISSUE_NUMBER` to `.claws/state.json` `inflight` list before spawning the
 
 ### 5d — Spawn the subagent
 
-Use Claude Code's `Agent` tool with `subagent_type: "general-purpose"`. Pass the full contents of `${CLAUDE_PLUGIN_ROOT}/skills/work-on-task/SKILL.md` plus the env-equivalent values inline in the prompt. The subagent runs in-process — no ACP, no SSM.
+Use Claude Code's `Agent` tool with `subagent_type: "general-purpose"` and `run_in_background: true`, so up to `maxConcurrent` subagents run concurrently. Pass the full contents of `${CLAUDE_PLUGIN_ROOT}/skills/work-on-task/SKILL.md` plus the env-equivalent values inline in the prompt. The subagents run in-process — no ACP, no SSM.
 
 Prompt template:
 
@@ -216,6 +244,7 @@ CLAWS_STATUS_FIELD_ID=<STATUS_FIELD_ID>
 CLAWS_STATUS_IN_PROGRESS=<STATUS_IN_PROGRESS>
 CLAWS_STATUS_BLOCKED=<STATUS_BLOCKED>
 CLAWS_STATUS_IN_REVIEW=<STATUS_IN_REVIEW>
+CLAWS_BASE_BRANCH=<BASE_BRANCH>
 GITHUB_REPO=<GITHUB_REPO>
 
 The card has already been moved to In Progress for you — skip Step 0's mutation and go straight to Step 1.
@@ -251,4 +280,5 @@ If no Ready cards were available, print `No Ready cards.` and exit.
 - Never push to `main` directly from this skill — only the subagent pushes, and only to `issue-N`.
 - Worktree cleanup is automatic but conservative: Step 1.5 removes a worktree (and its local/remote `issue-N` branch) **only** when its PR has merged. Never delete a worktree for an In Review, Blocked, errored, or open-PR issue — leave those for the operator to inspect.
 - If `gh auth status` fails, exit with a clear message — do not try to recover.
-- Serial dispatch only. Parallel `Agent` calls are technically possible but out of scope for this skill (the issue body calls this out).
+- Dispatch up to `maxConcurrent` cards concurrently via background `Agent` calls; claim each card and record it in-flight *before* spawning so a concurrent re-poll won't double-dispatch.
+- Respect dependencies (Step 4.5): never dispatch a card whose `depends on #N` are unmet; base a stacked card on its dependency's `issue-N` branch via `CLAWS_BASE_BRANCH`, and stack on only one base.

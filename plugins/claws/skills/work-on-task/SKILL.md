@@ -21,6 +21,9 @@ You must never ask the user questions. If you are blocked, signal it via GitHub 
 - `CLAWS_STATUS_APPROVED` — option ID for "Approved" (not used by this skill; consumed by the `pr-watcher` skill that advances cards from In Review → Approved)
 - `GITHUB_TOKEN` — GitHub PAT
 - `GITHUB_REPO` — org/repo
+- `CLAWS_BASE_BRANCH` — optional. The branch this task builds on and targets in its PR; defaults
+  to `main`. The poller sets it to a dependency's `issue-N` branch when this card `depends on`
+  another that isn't merged yet, so stacked work has its dependency's code as its base.
 - `CLAWS_RESUME` — optional. When set to `true`, run Step 0.5 — Resume mode before Step 1.
 - `CLAWS_LAST_BLOCKED_COMMENT_ID` — optional. GraphQL node ID of the comment that accompanied the last BLOCKED transition. Used to find comments newer than the block.
 - `CLAWS_LAST_BLOCKED_AT` — optional. ISO8601 timestamp of the last BLOCKED transition (fallback when `CLAWS_LAST_BLOCKED_COMMENT_ID` is unavailable).
@@ -96,6 +99,20 @@ Otherwise, read each new comment carefully and treat its content as authoritativ
 
 When in resume mode, the worktree may already contain prior commits from the previous session — inspect `git log origin/main..HEAD` before re-planning. The aim is to advance from where the prior session stopped, not redo it.
 
+## Step 0.6 — Load project conventions
+
+Before touching code, read the repo's own rules and follow them for everything below — commit
+style, comment policy, lint/format, and how to run and test the app. Check whatever exists, in order:
+
+- `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `CONTRIBUTING.md` at the repo root (and any nested
+  `CLAUDE.md` covering the directory you touch)
+- a `/docs` directory for architecture and run/test instructions
+
+These override your defaults. In particular, match the repo's commit convention (e.g. Conventional
+Commits) and its comment policy, and use the test/run commands it documents. If the repo forbids
+mentioning tool or assistant names in commit messages or code, honor that — omit any auto-appended
+session trailer from your commits.
+
 ## Step 1 — Read the issue
 
 ```bash
@@ -121,11 +138,26 @@ Write tests that describe the expected behavior. Run them and confirm they fail.
 
 Make the minimal code change to pass the tests. Run tests again and confirm they pass.
 
+## Step 4.5 — Verifying in a containerized project
+
+If the project runs in Docker (or any stack bound to a *different* checkout than your worktree),
+do NOT `docker exec` into the operator's already-running containers and do NOT copy your files
+into them. That stack is mounted from another checkout, so editing it dirties someone else's
+working tree — this has left stray files that blocked a later merge. Verify against THIS worktree:
+
+- Run tests in an ephemeral container scoped to the worktree, e.g.
+  `docker compose run --rm --no-deps <service> <test command>`, or
+  `docker run --rm -v "$PWD":/app -w /app <image> <test command>`.
+- If the compose network pool is exhausted, fall back to a direct `docker run` against the service
+  image with the worktree mounted.
+- Never write to, copy into, or leave artifacts in any container or checkout other than this
+  worktree. When you finish, your worktree must be the only thing that changed.
+
 ## Step 5 — Create PR
 
 ```bash
 git add -A
-git commit -m "<concise description of change>"
+git commit -m "<type(scope): concise description>"   # follow the repo's commit convention (Step 0.6)
 git push origin HEAD
 ```
 
@@ -138,7 +170,7 @@ if [ -z "$EXISTING_PR" ]; then
     --repo $GITHUB_REPO \
     --title "<issue title>" \
     --body "Closes #$CLAWS_ISSUE_NUMBER" \
-    --base main
+    --base "${CLAWS_BASE_BRANCH:-main}"
 fi
 ```
 
@@ -209,7 +241,9 @@ Exit 0.
 
 - Never use `AskUserQuestion` or any interactive tool
 - Never ask for confirmation — either proceed or signal blocked
-- Work only in the current directory (the worktree)
-- Never commit directly to main
+- Work only in the current directory (the worktree). Never write into, copy into, or leave
+  artifacts in any other checkout or a shared running container (Step 4.5).
+- Follow the repo's own conventions (Step 0.6): commit style, comment policy, test/run commands.
+- Never commit directly to main. Target `${CLAWS_BASE_BRANCH:-main}` for the PR.
 - Keep commits focused and atomic
 - If tests don't exist for the area you're modifying, write them first

@@ -1,6 +1,6 @@
 # Constitution
 
-**Version**: 1.1.0 · **Ratified**: 2026-07-01 · **Applies to**: mspivak/claws
+**Version**: 1.2.0 · **Ratified**: 2026-07-01 · **Applies to**: mspivak/claws
 
 This document is the source of truth for how agents build in this repository. It is
 read by `plan` before decomposing a PRD and by `work-on-task` before writing any code.
@@ -86,6 +86,16 @@ second language or tool for the same job.
   host toolchain stays irrelevant.
 - Only bypass Docker when a task explicitly says to run something natively (e.g. a
   host-level tool with no container story, like a native package manager bootstrap).
+
+## Documentation conventions
+
+- Every project has a `README.md` at the repo root. It links to every other doc file in
+  the repo — `specs/memory/constitution.md`, each `specs/<NNN-slug>/{spec,plan,tasks}.md`,
+  anything under `/docs`, `CONTRIBUTING.md`, architecture notes, runbooks — nothing sits
+  undiscoverable outside that index.
+- A task that adds a new doc file updates `README.md`'s links in the same PR; a doc file
+  with no inbound link from `README.md` is treated as a gap, not an optional extra.
+- Keep the index itself thin: one line and a link per doc, not a copy of its content.
 
 ## Governance
 

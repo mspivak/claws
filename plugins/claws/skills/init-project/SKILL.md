@@ -1,6 +1,6 @@
 ---
 name: init-project
-description: Interactive front-door that bootstraps the local claws workflow — ensure-or-create the git repo (local + GitHub), ensure-or-create the GitHub Project with the required Status options, and write .claws.json. Run this once before work-on-pending. Idempotent: detects and reuses anything that already exists. Named init-project to avoid colliding with Claude Code's built-in /init and the `claws init` Terraform CLI command.
+description: Interactive front-door that bootstraps the local claws workflow — ensure-or-create the git repo (local + GitHub), ensure-or-create the GitHub Project with the required Status options, ensure-or-create specs/memory/constitution.md, and write .claws.json. Run this once before work-on-pending. Idempotent: detects and reuses anything that already exists. Named init-project to avoid colliding with Claude Code's built-in /init and the `claws init` Terraform CLI command.
 argument-hint: "[owner=NAME] [repo=NAME] [projectTitle=\"...\"] [projectNumber=N] [visibility=private|public]"
 ---
 
@@ -11,7 +11,9 @@ directory (or an existing repo) and guarantees the three things the dogfooding l
 
 1. a git repository, locally **and** on GitHub
 2. a GitHub Project whose Status field carries the option set the skills move cards between
-3. a `.claws.json` pointing `work-on-pending` at that project
+3. a `specs/memory/constitution.md` with the stack defaults and principles `plan` and
+   `work-on-task` build against
+4. a `.claws.json` pointing `work-on-pending` at that project
 
 Unlike `work-on-task` and `plan`, this skill is **interactive** — it is run by the operator
 from Claude Code, so it may confirm before any create/overwrite. It is **idempotent**: every
@@ -170,7 +172,24 @@ This matches the contract enforced by `claws setup-github` for the remote/EC2 pa
 bootstrapped here is also valid for the OpenClaw poller. (`Approved` is included so `pr-watcher`
 can advance merged cards to the terminal state.)
 
-## Step 5 — Write .claws.json
+## Step 5 — Ensure specs/memory/constitution.md
+
+The constitution is the durable, versioned source of truth for stack defaults and coding
+principles that `plan` and `work-on-task` read before doing any work. It is committed to
+the repo (not gitignored like `.claws/`), so it travels with the codebase.
+
+```bash
+test -f specs/memory/constitution.md
+```
+
+If it already exists, leave it alone — this skill never overwrites an existing
+constitution. If missing, copy the opinionated default template shipped with this skill
+(`constitution-default.md`, alongside this file) to `specs/memory/constitution.md`, filling
+in `{{DATE}}` (today, ISO 8601) and `{{OWNER}}/{{REPO}}`. Tell the operator it was created
+from the default template and that they own edits to it going forward (Governance section
+of the file itself explains the amendment rule).
+
+## Step 6 — Write .claws.json
 
 If `.claws.json` already exists, show its contents and confirm before overwriting. Write:
 
@@ -190,17 +209,18 @@ JSON
 `work-on-pending` picks the right GraphQL query). `.claws.json` is committed to the repo;
 `.claws/` (runtime state) is gitignored.
 
-## Step 6 — Summary
+## Step 7 — Summary
 
 Print what was created versus reused, then the next action:
 
 ```
-Repo:    <owner>/<repo>        (created | reused)
-Project: <url>  #<number>      (created | reused)
-Status:  Ready, In Progress, In Review, Blocked, Approved   (set | already present)
-Config:  .claws.json written
+Repo:         <owner>/<repo>        (created | reused)
+Project:      <url>  #<number>      (created | reused)
+Status:       Ready, In Progress, In Review, Blocked, Approved   (set | already present)
+Constitution: specs/memory/constitution.md   (created from default | already present)
+Config:       .claws.json written
 
-Next: add a Ready card to the project, then run /work-on-pending.
+Next: add a Ready card to the project, or run /plan <prd> to generate some.
 ```
 
 ---
@@ -211,6 +231,8 @@ Next: add a Ready card to the project, then run /work-on-pending.
   project, or option set before creating anything.
 - Confirm before every irreversible action: `git init`, `gh repo create`, overwriting the Status
   options, overwriting an existing `.claws.json`.
+- Never overwrite an existing `specs/memory/constitution.md` — the operator owns amendments
+  to it once created (see its own Governance section).
 - Never delete a repo or project. This skill only creates and wires.
 - Never push application code or open PRs — it publishes at most the initial empty commit.
 - If the `project` scope is missing, exit with the `gh auth refresh` instruction; do not work around it.

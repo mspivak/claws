@@ -102,11 +102,17 @@ When in resume mode, the worktree may already contain prior commits from the pre
 ## Step 0.6 — Load project conventions
 
 Before touching code, read the repo's own rules and follow them for everything below — commit
-style, comment policy, lint/format, and how to run and test the app. Check whatever exists, in order:
+style, comment policy, lint/format, stack defaults, and how to run and test the app. Check
+whatever exists, in this order:
 
-- `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `CONTRIBUTING.md` at the repo root (and any nested
-  `CLAUDE.md` covering the directory you touch)
-- a `/docs` directory for architecture and run/test instructions
+1. `specs/memory/constitution.md` — the durable, versioned source of truth (written by
+   `init-project`, amended only by the repo owner). Its Core Principles and Technology Stack
+   Defaults take precedence over everything below when they overlap.
+2. If this issue's body references a `specs/<NNN-slug>/` path (see its "Context" section),
+   read that feature's `spec.md` and `plan.md` for the intent and approach behind this task.
+3. `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `CONTRIBUTING.md` at the repo root (and any nested
+   `CLAUDE.md` covering the directory you touch) — fill in anything the constitution doesn't cover.
+4. a `/docs` directory for architecture and run/test instructions.
 
 These override your defaults. In particular, match the repo's commit convention (e.g. Conventional
 Commits) and its comment policy, and use the test/run commands it documents. If the repo forbids

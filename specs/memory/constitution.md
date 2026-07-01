@@ -1,6 +1,6 @@
 # Constitution
 
-**Version**: 1.0.0 · **Ratified**: 2026-07-01 · **Applies to**: mspivak/claws
+**Version**: 1.1.0 · **Ratified**: 2026-07-01 · **Applies to**: mspivak/claws
 
 This document is the source of truth for how agents build in this repository. It is
 read by `plan` before decomposing a PRD and by `work-on-task` before writing any code.
@@ -43,7 +43,12 @@ second language or tool for the same job.
 
 | Concern | Default | Notes |
 |---|---|---|
-| Application / service language | Python ≥ 3.9 | `typer` for CLIs, `boto3` for AWS, `pytest` for tests, `hatchling` as build backend |
+| Application / service language | Python, latest stable release | Check the current stable CPython version before starting a new project rather than pinning to a remembered number; `typer` for CLIs, `boto3` for AWS, `pytest` for tests, `hatchling` as build backend |
+| Frontend framework | Next.js | Unless the task specifies otherwise |
+| Frontend routing | TanStack Router | Unless the task specifies otherwise |
+| Frontend UI components | shadcn/ui | Unless the task specifies otherwise |
+| Frontend hosting | Static export served from an S3 bucket configured for static website hosting (CloudFront in front when TLS or a custom domain is needed) | Reach for SSR (e.g. Next.js on a server runtime) only when the feature strictly requires it — per-request personalization, secrets that can't reach the client, etc. — and say why in `plan.md` |
+| Local development | Docker containers | All local dev happens inside project containers; run host commands through `docker compose exec <service> <cmd>` (or `docker compose run --rm <service> <cmd>` when nothing is running) instead of invoking toolchains natively on the host, unless the task explicitly says to run natively |
 | Infrastructure as code | Terraform | AWS provider pinned `~> 5.0`; one `terraform/` directory per deployable unit |
 | Terraform state | Remote: S3 bucket (versioned) + DynamoDB lock table | No local state beyond throwaway single-operator scratch work |
 | Cloud provider | AWS | Default region **us-west-2** unless the project has a latency/compliance reason to pin elsewhere |
@@ -70,6 +75,17 @@ second language or tool for the same job.
   `*:*` policies.
 - SSH/network ingress is restricted to the deployer's IP or a named security group, never
   `0.0.0.0/0`, unless the resource is intentionally public (e.g. a load balancer).
+
+## Local development conventions
+
+- Every project ships a `docker-compose.yml` (or equivalent) that brings up the full local
+  stack — app, dependencies, and tooling — as containers.
+- Tests, linters, builds, and one-off scripts run through the container, e.g.
+  `docker compose exec app pytest` or `docker compose run --rm app npm test` — not a
+  bare-host `pytest`/`npm test` invocation, so local runs match CI and every contributor's
+  host toolchain stays irrelevant.
+- Only bypass Docker when a task explicitly says to run something natively (e.g. a
+  host-level tool with no container story, like a native package manager bootstrap).
 
 ## Governance
 

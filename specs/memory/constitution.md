@@ -1,6 +1,6 @@
 # Constitution
 
-**Version**: 1.0.0 · **Ratified**: 2026-07-01 · **Applies to**: mspivak/claws
+**Version**: 1.2.0 · **Ratified**: 2026-07-01 · **Applies to**: mspivak/claws
 
 This document is the source of truth for how agents build in this repository. It is
 read by `plan` before decomposing a PRD and by `work-on-task` before writing any code.
@@ -9,12 +9,31 @@ overrides it and says why.
 
 ## Core principles
 
-<!-- Replace this with the repo owner's actual principles. Each one should be a short,
-testable rule an agent can follow without a further judgment call — not a vague aspiration.
+### I. Tests before code
+Every task implements TDD: write a failing test that encodes the acceptance criteria,
+watch it fail, then write the minimal code to pass it. No task is done without a test
+that would have caught the bug it fixes or the behavior it adds.
 
-### I. <Principle name>
-<1-3 sentences: the rule, and briefly why it exists.>
--->
+### II. Minimal surface, no speculative generality
+Build exactly what the task's acceptance criteria require. No config flags, abstraction
+layers, or "while I'm here" refactors beyond the task's stated scope. Three similar
+lines beat a premature abstraction.
+
+### III. No defaults, explicit over implicit
+Function and CLI parameters should not carry default values — callers state what they
+mean. Prefer dictionary/bracket access (`d["key"]`) over `.get("key")` accessors so
+missing keys fail loudly instead of silently returning `None`.
+
+### IV. Narrow error handling
+Never catch the bare `Exception` class (or equivalent broad catch-all) to paper over an
+unknown failure mode. Catch the specific exception type you expect and know how to
+handle; let everything else propagate.
+
+### V. No comments
+Code does not carry comments. Names, structure, and tests communicate intent. If a
+comment feels necessary to explain *why* (a non-obvious constraint, a workaround for a
+specific bug), that's the one exception — never comments that restate *what* the code
+does.
 
 ## Technology stack defaults
 
@@ -22,12 +41,21 @@ These are the defaults for new projects and new components. An existing project'
 established stack always wins — match what's already there rather than introducing a
 second language or tool for the same job.
 
-<!-- Fill in one row per concern (language, IaC, cloud provider, frontend framework,
-CI, commit convention, etc.). Leave a concern out entirely rather than guessing — an
-absent row means "match whatever the codebase already uses." -->
-
 | Concern | Default | Notes |
 |---|---|---|
+| Application / service language | Python, latest stable release | Check the current stable CPython version before starting a new project rather than pinning to a remembered number; `typer` for CLIs, `boto3` for AWS, `pytest` for tests, `hatchling` as build backend |
+| Frontend framework | Next.js | Unless the task specifies otherwise |
+| Frontend routing | TanStack Router | Unless the task specifies otherwise |
+| Frontend UI components | shadcn/ui | Unless the task specifies otherwise |
+| Frontend hosting | Static export served from an S3 bucket configured for static website hosting (CloudFront in front when TLS or a custom domain is needed) | Reach for SSR (e.g. Next.js on a server runtime) only when the feature strictly requires it — per-request personalization, secrets that can't reach the client, etc. — and say why in `plan.md` |
+| Local development | Docker containers | All local dev happens inside project containers; run host commands through `docker compose exec <service> <cmd>` (or `docker compose run --rm <service> <cmd>` when nothing is running) instead of invoking toolchains natively on the host, unless the task explicitly says to run natively |
+| Infrastructure as code | Terraform | AWS provider pinned `~> 5.0`; one `terraform/` directory per deployable unit |
+| Terraform state | Remote: S3 bucket (versioned) + DynamoDB lock table | No local state beyond throwaway single-operator scratch work |
+| Cloud provider | AWS | Default region **us-west-2** unless the project has a latency/compliance reason to pin elsewhere |
+| Resource tagging | Every Terraform-managed resource carries `Project` and `ManagedBy = "terraform"` tags | Enables cost tracking and safe teardown by tag |
+| Secrets | AWS SSM Parameter Store (SecureString), read via IAM instance role | Never bake secrets into AMIs, env files committed to git, or Terraform variable defaults |
+| CI | GitHub Actions | Tests must be green before merge; no merge on red CI |
+| Version control workflow | Conventional Commits (`type(scope): description`) | See [conventionalcommits.org](https://www.conventionalcommits.org/) |
 
 ## Testing & CI requirements
 
@@ -35,6 +63,39 @@ absent row means "match whatever the codebase already uses." -->
 - New code paths ship with tests in the same PR — not as follow-up work.
 - CI failures block merge; `pr-watcher` (or the equivalent reviewer) treats red CI as a
   Blocked signal, not a warning.
+
+## Infrastructure & AWS conventions
+
+- One `terraform/` root per deployable unit; no giant shared monolith module unless the
+  project explicitly calls for a shared platform layer.
+- `aws_region` and other environment-specific values are variables with **no default**
+  — the deployer states them explicitly at `terraform apply` time or via a `.tfvars` file
+  that is itself gitignored if it contains anything environment-specific.
+- IAM roles are scoped to the minimum actions/resources the workload needs; no
+  `*:*` policies.
+- SSH/network ingress is restricted to the deployer's IP or a named security group, never
+  `0.0.0.0/0`, unless the resource is intentionally public (e.g. a load balancer).
+
+## Local development conventions
+
+- Every project ships a `docker-compose.yml` (or equivalent) that brings up the full local
+  stack — app, dependencies, and tooling — as containers.
+- Tests, linters, builds, and one-off scripts run through the container, e.g.
+  `docker compose exec app pytest` or `docker compose run --rm app npm test` — not a
+  bare-host `pytest`/`npm test` invocation, so local runs match CI and every contributor's
+  host toolchain stays irrelevant.
+- Only bypass Docker when a task explicitly says to run something natively (e.g. a
+  host-level tool with no container story, like a native package manager bootstrap).
+
+## Documentation conventions
+
+- Every project has a `README.md` at the repo root. It links to every other doc file in
+  the repo — `specs/memory/constitution.md`, each `specs/<NNN-slug>/{spec,plan,tasks}.md`,
+  anything under `/docs`, `CONTRIBUTING.md`, architecture notes, runbooks — nothing sits
+  undiscoverable outside that index.
+- A task that adds a new doc file updates `README.md`'s links in the same PR; a doc file
+  with no inbound link from `README.md` is treated as a gap, not an optional extra.
+- Keep the index itself thin: one line and a link per doc, not a copy of its content.
 
 ## Governance
 

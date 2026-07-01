@@ -96,6 +96,23 @@ Otherwise, read each new comment carefully and treat its content as authoritativ
 
 When in resume mode, the worktree may already contain prior commits from the previous session — inspect `git log origin/main..HEAD` before re-planning. The aim is to advance from where the prior session stopped, not redo it.
 
+## Step 0.6 — Load project conventions
+
+Before touching code, read the repo's own rules and follow them for everything below — commit
+style, comment policy, and stack defaults. Check whatever exists, in this order:
+
+1. `specs/memory/constitution.md` — the durable, versioned source of truth (written by
+   `init-project`, amended only by the repo owner). Its Core Principles and Technology Stack
+   Defaults take precedence over everything below when they overlap.
+2. If this issue's body references a `specs/<NNN-slug>/` path (see its "Context" section),
+   read that feature's `spec.md` and `plan.md` for the intent and approach behind this task.
+3. `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `CONTRIBUTING.md` at the repo root (and any nested
+   `CLAUDE.md` covering the directory you touch) — fill in anything the constitution doesn't cover.
+
+These override your defaults. In particular, match the repo's commit convention (e.g. Conventional
+Commits) and its comment policy. If the repo forbids mentioning tool or assistant names in commit
+messages or code, honor that — omit any auto-appended session trailer from your commits.
+
 ## Step 1 — Read the issue
 
 ```bash
